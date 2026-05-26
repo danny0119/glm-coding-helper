@@ -1,6 +1,6 @@
 # 智谱 GLM Coding Plan 抢购助手 + 本地 OCR 自动验证码
 
-这是一个面向智谱 GLM Coding Plan 的抢购辅助项目，包含 Tampermonkey 油猴脚本和本地 CPU/GPU OCR 后端，用于限时抢购流程辅助、中文点选验证码自动识别、验证码自动点击、套餐按钮提前可点、限流重试和多窗口监控。
+这是一个面向智谱 GLM Coding Plan 的抢购辅助项目，包含 Tampermonkey 油猴脚本和本地 CPU/GPU OCR 后端，用于限时抢购流程辅助、中文点选验证码自动识别、验证码自动点击、套餐按钮提前可点、限流重试和多窗口监控。目前仅适配google chrome和edge浏览器，推荐使用chrome。
 
 
 默认使用作者内置折扣入口，可获得 95 折优惠；介意者可在脚本中自行替换入口参数。
@@ -24,6 +24,7 @@ https://github.com/user-attachments/assets/e1a56d07-5c4d-4aa1-a567-909dd25bd037
 - 默认不自动关闭无效支付链接/限流弹窗，需要在配置面板里手动开启
 - 默认使用作者内置折扣入口进入 GLM Coding Plan
 
+注意：目前仅适配了chrome和edge浏览器，我测试了1080p-1920p。桌面100%-150%放大倍率，浏览器50%-125%放大倍率都可以用。如果遇到截图或者识别问题可以调整为1920p，桌面100%-125%放大，浏览器100%尺寸。
 后端的安装、GPU/CPU 自动选择、worker 数、OCR 配置等说明见：
 
 ```text
@@ -68,7 +69,7 @@ Invoke-RestMethod http://127.0.0.1:8888/health
 
 ### 3. 安装油猴脚本
 
-1. 安装 Tampermonkey https://www.tampermonkey.net。
+1. 在chrome或者edge浏览器安装 Tampermonkey https://www.tampermonkey.net。
 2. （1）访问https://greasyfork.org/zh-CN/scripts/579760-glm-coding-helper获取
 或者
    （2）打开仓库根目录的 `glm-coding-helper.user.js`。
