@@ -1,0 +1,3 @@
+@echo off
+cd /D D:\test\glm-cpu-lite-concurrency-l-4
+venv\Scripts\python.exe -u -c "import PyInstaller.__main__; PyInstaller.__main__.run(['glm-lite.py','--name=GLM-Coding-Helper-Lite','--onefile','--clean','--noconfirm','--log-level=INFO','--distpath=D:\\glm-coding-helper-lite-v1.1','--workpath=tmp_build','--add-data=config.json;.','--hidden-import=backend','--hidden-import=backend.server','--hidden-import=backend.worker','--hidden-import=backend.ppocr_worker','--hidden-import=uvicorn.logging','--hidden-import=uvicorn.loops.auto','--hidden-import=uvicorn.protocols.http.auto'])" > D:\glm-coding-helper-lite-v1.1\build.log 2>&1
