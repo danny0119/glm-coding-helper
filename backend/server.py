@@ -33,7 +33,23 @@ if str(ROOT) not in os.sys.path:
 
 # ── 加载 config.json（支持可配置 worker 数）─────────────────
 CONFIG_PATH = ROOT / "config.json"
-_DEFAULT = {"workers": 4, "ocr_workers": 8, "port": 8888}
+
+def _smart_defaults():
+    """按 CPU 核数智能分配 YOLO / OCR worker 数"""
+    try:
+        cores = psutil.cpu_count(logical=False) or psutil.cpu_count(logical=True) or 4
+    except Exception:
+        cores = 4
+    yolo = max(1, min(4, cores // 4))
+    ocr  = max(2, min(8, cores // 2))
+    # 留 1-2 核给系统
+    if yolo + ocr >= cores:
+        ocr = max(2, cores - yolo - 1)
+    return yolo, ocr
+
+_smart_yolo, _smart_ocr = _smart_defaults()
+_DEFAULT = {"workers": _smart_yolo, "ocr_workers": _smart_ocr, "port": 8888}
+
 if CONFIG_PATH.exists():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -49,8 +65,10 @@ PORT   = max(1, int(_cfg.get("port", _DEFAULT["port"])))
 if not CONFIG_PATH.exists():
     try:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump({"workers": N_YOLO, "ocr_workers": N_OCR, "port": PORT}, f, indent=2)
-        print(f"[config] created default {CONFIG_PATH}")
+            json.dump({"workers": N_YOLO, "ocr_workers": N_OCR, "port": PORT,
+                        "_auto": True, "_cores": psutil.cpu_count(logical=False) or 0}, f, indent=2)
+        print(f"[config] created default {CONFIG_PATH} "
+              f"(cores={psutil.cpu_count(logical=False) or '?'} → YOLO={N_YOLO} OCR={N_OCR})")
     except Exception:
         pass
 
