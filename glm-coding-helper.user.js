@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         智谱 GLM Coding Plan 抢购助手 + 本地 OCR 自动验证码
 // @namespace    http://tampermonkey.net/
-// @version      8.15
+// @version      8.13
 // @description  GLM Coding Rush / 智谱 GLM Coding Plan 抢购助手，一键抢购油猴脚本 / Tampermonkey userscript，配合本地 CPU/GPU OCR 自动识别中文点选验证码并点击，支持多窗口并发、限流重试和支付页安全保护
 // @author       mumumi
 // @include      https://*bigmodel.cn/glm-coding*
@@ -17,7 +17,9 @@
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
 // @connect      localhost:8888
+// @connect      localhost
 // @connect      127.0.0.1:8888
+// @connect      127.0.0.1
 // @connect      gtimg.com
 // @connect      *.gtimg.com
 // @connect      captcha.qcloud.com
@@ -28,7 +30,54 @@
 // @source       https://greasyfork.org/zh-CN/scripts/572157-glm-coding-plan%E6%8A%A2%E8%B4%AD%E5%8A%A9%E6%89%8B
 // @credit       Based on mumumi's GLM Coding Plan helper; thanks to the original author.
 // ==/UserScript==
- 
+ ;
+
+// ── Shared Utilities ───────────────────────────────────────────────────────
+function visible(el) {
+    if (!el) return false;
+    var style = getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    var rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+}
+function bgUrlFrom(el) {
+    if (!el) return "";
+    var bg = "";
+    try { bg = (el.style && el.style.backgroundImage) || window.getComputedStyle(el).backgroundImage || ""; } catch(e) {}
+    var match = bg.match(/url\(["']?([^"')]+)/);
+    if (!match) return "";
+    try { return new URL(match[1], location.href).href; } catch(e) { return match[1]; }
+}
+function captchaBgUrlFrom(el) { return bgUrlFrom(el); }
+function fetchImageDataUrl(url) {
+    return new Promise(function(resolve, reject) {
+        if (typeof GM_xmlhttpRequest !== "undefined") {
+            GM_xmlhttpRequest({
+                method: "GET", url: url,
+                responseType: "blob",
+                onload: function(r) {
+                    var reader = new FileReader();
+                    reader.onload = function() { resolve(reader.result); };
+                    reader.onerror = function() { reject(new Error("FileReader failed")); };
+                    reader.readAsDataURL(r.response);
+                },
+                onerror: function() { reject(new Error("image download failed")); }
+            });
+            return;
+        }
+        fetch(url, { credentials: "include" })
+            .then(function(r) { return r.blob(); })
+            .then(function(blob) {
+                var reader = new FileReader();
+                reader.onload = function() { resolve(reader.result); };
+                reader.onerror = function() { reject(new Error("FileReader failed")); };
+                reader.readAsDataURL(blob);
+            })
+            .catch(reject);
+    });
+}
+function fetchCaptchaImageDirect(url) { return fetchImageDataUrl(url); }
+
 (function () {
     'use strict';
 
@@ -57,87 +106,6 @@
             console.log('[glm-captcha-direct] ' + msg);
         }
 
-        function visible(el) {
-            if (!el) return false;
-            const style = getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden') return false;
-            const rect = el.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        }
-
-        function bgUrlFrom(el) {
-            if (!el) return '';
-            const text = (el.style && el.style.backgroundImage ? el.style.backgroundImage : '') || getComputedStyle(el).backgroundImage || '';
-            const match = text.match(/url\(["']?([^"')]+)["']?\)/);
-            if (!match) return '';
-            try { return new URL(match[1], location.href).href; }
-            catch { return match[1]; }
-        }
-
-        function findBgElement() {
-            const selectors = [
-                '#slideBg',
-                '.tencent-captcha-dy__verify-bg-img',
-                '[class*="verify-bg"]',
-                '.tencent-captcha-dy__bg-img',
-                '.tencent-captcha-dy__image-area',
-            ];
-            for (const selector of selectors) {
-                const el = document.querySelector(selector);
-                if (visible(el) && bgUrlFrom(el)) return el;
-            }
-            return null;
-        }
-
-        function findPromptText() {
-            const selectors = [
-                '#instructionText',
-                '.tencent-captcha-dy__header-text',
-                '.tencent-captcha-dy__header-title-wrap .tencent-captcha-dy__header-text',
-                '[class*="header-text"]',
-            ];
-            for (const selector of selectors) {
-                const el = document.querySelector(selector);
-                if (!visible(el)) continue;
-                const raw = (el.textContent || el.getAttribute('aria-label') || '').trim();
-                const cleaned = raw
-                    .replace(/^\s*\u8BF7\u4F9D\u6B21\u70B9\u51FB[:\uff1a]?\s*/, '')
-                    .replace(/\s+/g, '');
-                const chars = (cleaned.match(/[\u4e00-\u9fff]/g) || []).slice(-3);
-                if (chars.length >= 3) return chars.join('');
-            }
-            return '';
-        }
-
-        function fetchImageDataUrl(url) {
-            return new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
-                    GM_xmlhttpRequest({
-                        method: 'GET',
-                        url,
-                        responseType: 'blob',
-                        onload: (res) => {
-                            const reader = new FileReader();
-                            reader.onload = () => resolve(reader.result);
-                            reader.onerror = () => reject(new Error('FileReader failed'));
-                            reader.readAsDataURL(res.response);
-                        },
-                        onerror: () => reject(new Error('image download failed')),
-                    });
-                    return;
-                }
-                fetch(url, { credentials: 'include' })
-                    .then(r => r.blob())
-                    .then(blob => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.onerror = () => reject(new Error('FileReader failed'));
-                        reader.readAsDataURL(blob);
-                    })
-                    .catch(reject);
-            });
-        }
-
         function postDirect(dataUrl, chars) {
             const body = JSON.stringify({
                 image: dataUrl,
@@ -145,26 +113,77 @@
                 ts: Date.now(),
                 source: 'tencent_iframe_direct',
             });
+            const url = DIRECT_OCR_URL;
+            // 优先用 fetch() —— 浏览器原生无连接数限制，12窗口同时发不排队
+            // 若 iframe CSP 阻止，再回退 GM_xmlhttpRequest
             return new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
+                const doFetch = () => {
+                    fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body,
+                    }).then(r => r.json()).then(resolve).catch(() => {
+                        if (typeof GM_xmlhttpRequest !== 'undefined') {
+                            doGM();
+                        } else {
+                            reject(new Error('both fetch and GM_xmlhttpRequest failed'));
+                        }
+                    });
+                };
+                const doGM = () => {
                     GM_xmlhttpRequest({
                         method: 'POST',
-                        url: DIRECT_OCR_URL,
+                        url: url,
                         headers: { 'Content-Type': 'application/json' },
                         data: body,
                         onload: (res) => {
                             try { resolve(JSON.parse(res.responseText)); }
                             catch { reject(new Error('bad direct OCR JSON')); }
                         },
-                        onerror: () => reject(new Error('direct OCR request failed')),
+                        onerror: () => reject(new Error('GM_xmlhttpRequest failed')),
                     });
-                    return;
-                }
-                fetch(DIRECT_OCR_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body,
-                }).then(r => r.json()).then(resolve).catch(reject);
+                };
+                doFetch();
+            });
+        }
+
+        /** 将图片 URL 发给服务端下载并识别 —— 客户端零下载、零排队 */
+        function postDirectUrl(imgUrl, chars) {
+            const body = JSON.stringify({
+                url: imgUrl,
+                text: chars,
+                ts: Date.now(),
+                source: 'tencent_iframe_direct_url',
+            });
+            const url = 'http://127.0.0.1:8888/captcha_direct_url';
+            return new Promise((resolve, reject) => {
+                const doFetch = () => {
+                    fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body,
+                    }).then(r => r.json()).then(resolve).catch(() => {
+                        if (typeof GM_xmlhttpRequest !== 'undefined') {
+                            doGM();
+                        } else {
+                            reject(new Error('both fetch and GM_xmlhttpRequest failed'));
+                        }
+                    });
+                };
+                const doGM = () => {
+                    GM_xmlhttpRequest({
+                        method: 'POST',
+                        url: url,
+                        headers: { 'Content-Type': 'application/json' },
+                        data: body,
+                        onload: (res) => {
+                            try { resolve(JSON.parse(res.responseText)); }
+                            catch { reject(new Error('bad direct OCR JSON')); }
+                        },
+                        onerror: () => reject(new Error('GM_xmlhttpRequest failed')),
+                    });
+                };
+                doFetch();
             });
         }
 
@@ -207,7 +226,9 @@
         }
 
         async function solveOnce() {
-            if (!captchaCfg.AUTO_CAPTCHA_CLICK) return;
+            var autoClick = captchaCfg.AUTO_CAPTCHA_CLICK;
+            var autoConfirm = captchaCfg.AUTO_CAPTCHA_CONFIRM;
+            if (!autoClick) return;
             const bgEl = findBgElement();
             if (!bgEl) return;
             const bgUrl = bgUrlFrom(bgEl);
@@ -223,8 +244,14 @@
 
             lastBgUrl = bgUrl;
             log('capture ' + chars + ' from ' + bgUrl.slice(0, 90));
-            const dataUrl = await fetchImageDataUrl(bgUrl);
-            const response = await postDirect(dataUrl, chars);
+            // 优先发 URL 让服务端下载并识别 —— 客户端零下载、零排队
+            var response = await postDirectUrl(bgUrl, chars);
+            if (!response || !response.success) {
+                // CSP 阻止 fetch 时回退：客户端下载 base64 再发
+                log('postDirectUrl failed, fallback to postDirect');
+                const dataUrl = await fetchImageDataUrl(bgUrl);
+                response = await postDirect(dataUrl, chars);
+            }
             const result = response && response.result;
             if (!result || !result.success || !Array.isArray(result.click_coords)) {
                 log('direct OCR failed: ' + JSON.stringify(response).slice(0, 200));
@@ -239,7 +266,7 @@
                 await sleep(180);
             }
             await sleep(250);
-            if (captchaCfg.AUTO_CAPTCHA_CONFIRM) clickConfirm();
+            if (autoConfirm) clickConfirm();
         }
 
         async function tick() {
@@ -279,26 +306,8 @@
 
     const GLM_DISCOUNT_CODE = ['9G', 'XW', 'L9', 'KC', 'GZ'].join('');
     const GLM_CODING_URL = () => `https://www.bigmodel.cn/glm-coding?ic=${GLM_DISCOUNT_CODE}&closedialog=true`;
-
-    function ensureDiscountEntry() {
-        try {
-            if (!/\/glm-coding(?:\/|$)/.test(location.pathname || '')) return false;
-            const u = new URL(location.href);
-            u.protocol = 'https:';
-            u.hostname = 'www.bigmodel.cn';
-            if (location.protocol === 'https:' && location.hostname === 'www.bigmodel.cn' &&
-                u.searchParams.get('ic') === GLM_DISCOUNT_CODE && u.searchParams.get('closedialog') === 'true') return false;
-            u.searchParams.set('ic', GLM_DISCOUNT_CODE);
-            u.searchParams.set('closedialog', 'true');
-            location.replace(u.toString());
-            return true;
-        } catch {
-            return false;
-        }
-    }
  
     // ── 限流页立即跳回主页 ────────────────────────────────────────────────────
-    if (!location.href.includes('rate-limit.html') && ensureDiscountEntry()) return;
     if (location.href.includes('rate-limit.html') && EARLY_AUTO_CLOSE_INVALID) {
         location.replace(GLM_CODING_URL());
         return;
@@ -402,6 +411,7 @@
                     PS.payAmount = d.data.payAmount;
                     PS.inProgress = false;
                     everSucceeded = true;
+                    mtNotifyClick();
                     return new Response(txt, { status: 200, headers: { 'Content-Type': 'application/json' } });
                 } else if (d?.code === 555 || (d?.code >= 500 && d?.code !== 200)) {
                     console.log(`[GLM v8.9] preview 错误 code:${d?.code} msg:${d?.msg}，脚本将自动重试`);
@@ -515,6 +525,13 @@
         AUTO_CLICK_SUB    : true,
         AUTO_CAPTCHA_CLICK : true,
         AUTO_CAPTCHA_CONFIRM: false,
+        TEST_MODE: false,
+        RUSH_ENABLED        : false,
+        RUSH_TARGET_HOUR    : 9,
+        RUSH_TARGET_MIN     : 59,
+        RUSH_TARGET_SEC     : 58,
+        MT_TABS          : 1,       // 多开标签页数（1=单窗口）
+        MT_STAGGER_MS    : 500,     // 多开错开间隔（毫秒）
     };
  
     function loadCfg() { try { const s = GM_getValue(STORAGE_KEY, null); return s ? { ...DEF, ...JSON.parse(s) } : { ...DEF }; } catch { return { ...DEF }; } }
@@ -526,6 +543,7 @@
     GM_registerMenuCommand('🚀 一键多开窗口', openMultipleWindows);
  
     // ── v8.0: ESC 键快速关闭弹窗 ──────────────────────────────────────────────
+    let pendingRecheck = false;
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' || e.keyCode === 27) {
             const busyDlg = document.querySelector('.el-dialog__wrapper .empty-data-wrap');
@@ -534,13 +552,26 @@
                 if (wrapper && getComputedStyle(wrapper).display !== 'none') {
                     closeModal(wrapper);
                     console.log('[GLM] ESC 关闭系统繁忙弹窗');
-                    return;
+                    pendingRecheck = true; return;
                 }
+            }
+            const rlw = findRLModal();
+            if (rlw) {
+                closeModal(rlw);
+                console.log('[GLM] ESC 关闭限流弹窗');
+                pendingRecheck = true; return;
             }
             const payDlg = getPayDialog();
             if (payDlg) {
+                const prices = readDialogPrices();
+                if (prices && !prices.any) {
+                    closePayDialog();
+                    console.log('[GLM] ESC 关闭无效支付弹窗（无价格）');
+                    pendingRecheck = true; return;
+                }
                 closePayDialog();
                 console.log('[GLM] ESC 关闭支付弹窗');
+                pendingRecheck = true; return;
             }
         } else if (e.key === 'Enter' || e.keyCode === 13 || e.key === ' ') {
             e.preventDefault();
@@ -565,44 +596,109 @@
         }
     });
  
-    // ── v8.0: 一键多开窗口函数 ────────────────────────────────────────────────
+    // ── v8.0: 一键多开窗口函数（0.5s 异步错开）────────────────────────────────
     function openMultipleWindows() {
-        const count = prompt('请输入要打开的窗口数量（建议 2-5 个）:', '3');
+        const count = prompt('请输入要打开的窗口数量（建议 2-8 个）:', String(CFG.MT_TABS));
         if (!count) return;
         const n = parseInt(count);
-        if (isNaN(n) || n < 1 || n > 10) { alert('请输入 1-10 之间的数字'); return; }
+        if (isNaN(n) || n < 1 || n > 20) { alert('请输入 1-20 之间的数字'); return; }
+        const stagger = parseInt(CFG.MT_STAGGER_MS) || 500;
         const baseUrl = GLM_CODING_URL();
         for (let i = 0; i < n; i++) {
             setTimeout(() => {
-                const url = baseUrl + (i > 0 ? `&wi=${i}` : '');
+                const sep = baseUrl.includes('?') ? '&' : '?';
+                const url = baseUrl + `${sep}wi=${i}`;
                 GM_openInTab(url, { active: false, insert: true, setParent: true });
-            }, i * 300);
+            }, i * Math.max(100, stagger));
         }
-        alert(`✅ 已打开 ${n} 个标签页！\n\n� 多窗口抢购流程：\n1. 每个窗口自动解验证码（不点确定）\n2. 等待到 10:00:00 + 错开时间\n3. 自动点击确认发送请求\n\n💡 窗口0最先点，之后每个错开2秒`);
+        alert(`✅ 已打开 ${n} 个标签页（间隔 ${stagger}ms 错开）！\n\n每个窗口独立运行状态机，抢到即止。`);
     }
  
     // ── 扫描队列（过滤今日已确认售罄）────────────────────────────────────────
     const tabs      = String(CFG.TABS_PRIORITY).split(',').map(Number).filter(Boolean);
     const pkgs      = String(CFG.PACKAGES_PRIORITY).split(',').map(Number).filter(Boolean);
-    const allTargets = tabs.flatMap(t => pkgs.map(p => ({ tab: t, pkg: p })));
-    const scanQueue = allTargets.filter(({ tab: t, pkg: p }) => getS(t, p) !== 1);
+    const scanQueue = tabs.flatMap(t => pkgs.map(p => ({ tab: t, pkg: p }))).filter(({ tab: t, pkg: p }) => getS(t, p) !== 1);
  
     if (!scanQueue.length) {
-        scanQueue.push(...allTargets);
-        setTimeout(() => setBar('📭 今日缓存显示全售罄，仍会重新扫描确认。', '#434343'), 800);
+        scanQueue.push({ tab: -1, pkg: -1 });
     }
  
     // ── 状态机变量 ────────────────────────────────────────────────────────────
     let state = 'SCANNING';   // SCANNING | TASK_UNIT | SLEEPING | DONE
  
     // SCANNING / TASK_UNIT
-    let qIdx = 0, sweepRestocks = [], lastTabSwitch = 0, sweepBusyCount = 0, emptySweepCount = 0;
-    const soldOutHits = Object.create(null);
+    let qIdx = 0, sweepRestocks = [], lastTabSwitch = 0, sweepBusyCount = 0;
     let taskTarget = null, taskPhase = 'IDLE', taskClickTime = 0, taskRLCount = 0;
     let lastCloseReason = '';
     let sleepUntil = 0;
-    const MAX_RL = 3, MODAL_WAIT = 15000, EMPTY_SWEEP_CONFIRM = 3, EMPTY_SWEEP_RETRY_MS = 180000, SOLD_OUT_CONFIRM = 2;
+    const MAX_RL = 3, MODAL_WAIT = 15000;
  
+    // ── 多开协调（BroadcastChannel + GM lock）─────────────────────────────────
+    const MT_STAGGER = Math.max(100, parseInt(CFG.MT_STAGGER_MS) || 500);
+    let myWi = (() => { try { const p = new URLSearchParams(location.search); return parseInt(p.get('wi') || '0', 10); } catch { return 0; } })();
+    if (isNaN(myWi) || myWi < 0) myWi = 0;
+    let mtChannel = null;
+    let mtLockHeld = false;
+    let mtLockHolder = -1;
+    let mtLockUntil = 0;
+    let mtInitialDelay = (myWi || 0) * MT_STAGGER; // 错开初始启动
+
+    function initMT() {
+        if (myWi === 0) return;
+        try {
+            mtChannel = new BroadcastChannel('glm-mt-coord');
+            mtChannel.onmessage = (e) => {
+                const d = e.data;
+                if (!d || d.wi === myWi) return;
+                if (d.type === 'lock') {
+                    mtLockHeld = true; mtLockHolder = d.wi; mtLockUntil = Date.now() + 3000;
+                } else if (d.type === 'release' || d.type === 'clicked') {
+                    mtLockHeld = false; mtLockHolder = -1; mtLockUntil = 0;
+                }
+            };
+            mtChannel.postMessage({ type: 'hello', wi: myWi });
+            console.log(`[GLM] MT: tab #${myWi} ready (stagger ${mtInitialDelay}ms)`);
+        } catch(e) { console.log('[GLM] MT: BroadcastChannel unavailable, running standalone'); }
+    }
+    initMT();
+
+    // 异步获取点击锁（仅多开时生效）
+    function acquireMTClickLock(timeout) {
+        if (myWi === 0 || !mtChannel) return Promise.resolve(true);
+        timeout = timeout || 5000;
+        const start = Date.now();
+        return new Promise(resolve => {
+            const tryLock = () => {
+                if (Date.now() - start > timeout) { resolve(false); return; }
+                if (!mtLockHeld || Date.now() > mtLockUntil) {
+                    mtChannel.postMessage({ type: 'lock', wi: myWi, ts: Date.now() });
+                    setTimeout(() => {
+                        if (mtLockHeld && mtLockHolder === myWi) resolve(true);
+                        else setTimeout(tryLock, 200);
+                    }, 50);
+                } else {
+                    setTimeout(tryLock, 400);
+                }
+            };
+            tryLock();
+        });
+    }
+
+    function releaseMTClickLock() {
+        if (myWi === 0 || !mtChannel) return;
+        mtChannel.postMessage({ type: 'release', wi: myWi });
+        mtLockHeld = false; mtLockHolder = -1; mtLockUntil = 0;
+    }
+
+    // 通知其他窗口：本窗口已点击订阅按钮
+    function mtNotifyClick() {
+        if (myWi === 0) return;
+        GM_setValue('mt_clicked', String(Date.now()));
+        if (mtChannel) {
+            try { mtChannel.postMessage({ type: 'clicked', wi: myWi, ts: Date.now() }); } catch {}
+        }
+    }
+
     // ── 工具函数 ──────────────────────────────────────────────────────────────
     function parseRestock(text) {
         const m = (text || '').match(/0?(\d{1,2})月0?(\d{1,2})日\s*(\d{1,2}):0?(\d{1,2})/);
@@ -628,20 +724,88 @@
     }
     function isRealBizId(id) { return id && !id.startsWith('debug-'); }
  
-    // ── v8.0: 黄金时间判断（9:30-10:10）──────────────────────────────────────
+    // ── v8.0: 黄金时间判断（9:50-10:10）──────────────────────────────────────
     function isGoldenTime() {
         const now = new Date();
         const h = now.getHours();
         const m = now.getMinutes();
         const time = h * 60 + m;
-        const start = 9 * 60 + 30;  // 9:30
+        const start = 9 * 60 + 50;  // 9:50
         const end = 10 * 60 + 10;   // 10:10
         return time >= start && time <= end;
     }
  
     // ── DOM 访问 ──────────────────────────────────────────────────────────────
-    const tabEl     = n => document.querySelectorAll('#switchTabBox .switch-tab-item')[n];
+    const tabEl     = n => document.querySelectorAll('#switchTabBox .switch-tab-item')[n - 1];
     const btnEl     = n => document.querySelector(`.glm-coding-package-list > div:nth-child(${n}) > div > .package-card-btn-box > button`);
+    // ── 特惠订阅：通过页面上下文注入脚本绕过 TM 沙箱 ──────────────────────────
+    const subFindAndClick = (doClick, pkgIdx) => {
+        if (!document.body) return doClick ? null : {ok:0};
+        const allowed = doClick ? (pkgIdx ? '_' + pkgIdx : '') : ('_' + (CFG.PACKAGES_PRIORITY || '2,3,1'));
+        const s = document.createElement('script');
+        s.textContent = `document.__glm_sub = (function(click, allowed){
+            var only = allowed ? allowed.split('_')[1].split(',').map(function(x){return parseInt(x)}).filter(function(x){return x>0}) : null;
+            function inCard(nth){
+                for(var i=0;i<(only||[]).length;i++){ if(only[i]===nth) return true; }
+                return false;
+            }
+            var best = null;
+            // 按精确目标或优先级顺序搜索
+            var targets = only && only.length ? only : [1,2,3];
+            for(var ti=0;ti<targets.length;ti++){
+                var nth = targets[ti];
+                var card = document.querySelector('.glm-coding-package-list > div:nth-child('+nth+')');
+                if(!card) continue;
+                var btn = card.querySelector('button[name="特惠订阅"]:not([disabled]), button.buy-btn:not([disabled])');
+                if(!btn) continue;
+                var t=(btn.textContent||'')+' '+(btn.getAttribute('name')||'');
+                if(!/订阅|购买|特惠|抢购|立即|开通|限时|优惠|加入|去抢|subscribe|buy|rush/i.test(t)) continue;
+                if(/售罄|补货|暂时/.test(t)) continue;
+                if(btn.offsetParent===null||getComputedStyle(btn).display==='none') continue;
+                best = btn; break;
+            }
+            // fallback: 通用搜索 + 检查所属卡片
+            if(!best){
+                var sel = 'button,.buy-btn,.subscribe-btn,[class*="buy"],[class*="sub"],[class*="btn"]';
+                for(var els=document.querySelectorAll(sel),i=0;i<els.length;i++){
+                    var b=els[i];
+                    if(b.disabled||b.classList.contains('is-disabled')||b.classList.contains('disabled')) continue;
+                    var t=(b.textContent||'')+' '+(b.getAttribute('name')||'');
+                    if(!/订阅|购买|特惠|抢购|立即|开通|限时|优惠|加入|去抢|subscribe|buy|rush/i.test(t)) continue;
+                    if(/售罄|补货|暂时/.test(t)) continue;
+                    if(/即刻订阅|暂不订阅|了解更多/.test(t)) continue;
+                    if(b.offsetParent===null||getComputedStyle(b).display==='none') continue;
+                    var card = b.closest('.glm-coding-package-list > div');
+                    var nth = card ? Array.from(card.parentNode.children).indexOf(card)+1 : -1;
+                    if(only && !inCard(nth)) continue;
+                    best = b; break;
+                }
+            }
+            if(best){
+                console.log('[GLM] injecting click on:', best.className, (best.textContent||'').trim().slice(0,20));
+                if(click){
+                    best.scrollIntoView({behavior:'instant',block:'center'});
+                    var ts = [];
+                    [best.closest('.package-card-btn-box'), best.closest('[class*="package"]'), best.parentElement, best, best.querySelector('span')].forEach(function(el){
+                        if(el && ts.indexOf(el)===-1) ts.push(el);
+                    });
+                    ts.forEach(function(t){
+                        try{ t.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window,button:0})); }catch(e){}
+                    });
+                    console.log('[GLM] injected 点击特惠订阅 (targets='+ts.length+')');
+                }
+                return {ok:1, tag:best.tagName, text:(best.textContent||'').trim().slice(0,30), pkg:nth};
+            }
+            return {ok:0};
+        })(${doClick}, '${allowed}')`;
+        document.body.appendChild(s);
+        s.remove();
+        const r = document.__glm_sub;
+        delete document.__glm_sub;
+        return r;
+    };
+    const findOtherSubscriptionBtn = () => subFindAndClick(false);
+    const clickSubBtn2 = (pkgIdx) => subFindAndClick(true, pkgIdx);
     const canBuy    = b => b && !b.disabled && !b.classList.contains('is-disabled') && !b.classList.contains('disabled') && !/售罄|补货|暂时/.test(b.innerText || '');
     const isSoldOut = b => /售罄|补货|暂时/.test(b?.innerText || '');
     const isBusy    = b => /抢购人数过多|请刷新/.test(b?.innerText || '');
@@ -654,11 +818,24 @@
     }
     function getPayDialog() {
         const d = document.querySelector('.pay-dialog');
-        if (!d) return null;
-        const w = d.closest('.el-dialog__wrapper');
-        if (!w || getComputedStyle(w).display === 'none') return null;
-        if ((w.innerText || '').includes('当前购买人数较多')) return null;
-        return d;
+        if (d) {
+            const w = d.closest('.el-dialog__wrapper');
+            if (w && getComputedStyle(w).display !== 'none' && !(w.innerText || '').includes('当前购买人数较多')) return d;
+        }
+        for (const w of document.querySelectorAll('.el-dialog__wrapper')) {
+            if (getComputedStyle(w).display === 'none') continue;
+            const txt = w.innerText || '';
+            if (txt.includes('当前购买人数较多')) continue;
+            if (txt.includes('系统异常') || txt.includes('请稍后重试') || txt.includes('错误')) {
+                console.log('[GLM] getPayDialog found error dialog');
+                return w.querySelector('.el-dialog__body') || w.querySelector('.el-dialog') || w;
+            }
+            if (w.querySelector('.el-dialog__body img') && (txt.includes('支付') || txt.includes('支付宝') || txt.includes('微信'))) {
+                console.log('[GLM] getPayDialog fallback found payment dialog');
+                return w.querySelector('.el-dialog__body') || d;
+            }
+        }
+        return null;
     }
     function isPayDialog()     { return !!getPayDialog(); }
     function isSuccessDialog() {
@@ -722,8 +899,16 @@
         const dlg = getPayDialog();
         if (!dlg) return 'keep';
 
-        // 绝对安全锁：本次会话中只要成功过一次，永不关闭
-        if (everSucceeded) return 'keep';
+        // 抢购模式锁定：抢购确认后永不自动关闭支付弹窗，留給用户手动处理
+        if (window.__glmRushConfirmed) {
+            window.__glmRushDialogSeen = 1;
+            return 'keep';
+        }
+
+        // 绝对安全锁：本次会话中只要成功过一次，且当前 bizId 有效（当前预览成功了），永不关闭
+        if (everSucceeded && PS.bizId) {
+            return 'keep';
+        }
 
         // 接口还没返回
         if (PS.inProgress) return 'keep';
@@ -764,7 +949,7 @@
             document.body.appendChild(_bar);
         }
         _bar.style.background = bg;
-        _bar.firstElementChild.innerHTML = `🤖 <b>抢购助手</b> &nbsp;|&nbsp; ${html}`;
+        _bar.firstElementChild.innerHTML = `🤖 <b>抢购助手</b> #${myWi} &nbsp;|&nbsp; ${html}`;
     }
  
     // ── 支付报警：视口边框红色闪烁 ────────────────────────────────────────────
@@ -887,6 +1072,26 @@
                     <span style="font-size:14px;color:#555">自动点击验证码确定</span>
                     <span title="默认关闭。开启后点完验证码文字会自动点确定；关闭后需要你手动点确定。" style="margin-left:6px;cursor:help;color:#999;font-size:14px;border:1px solid #ccc;border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1">?</span>
                 </label>
+                <label style="display:flex;align-items:center;cursor:pointer">
+                    <input type="checkbox" id="glm-tm" ${CFG.TEST_MODE ? 'checked' : ''} style="margin-right:8px">
+                    <span style="font-size:14px;color:#555">启用测试模式</span>
+                    <span title="开启后在页面右下角显示测试面板，可测试后端连接、验证码识别和点击确认。&#10;测试时不会触发抢购逻辑。" style="margin-left:6px;cursor:help;color:#999;font-size:14px;border:1px solid #ccc;border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1">?</span>
+                </label>
+                <div style="margin-top:8px;padding-top:12px;border-top:1px dashed #eee">
+                    <label style="display:flex;align-items:center;cursor:pointer">
+                        <input type="checkbox" id="glm-re" ${CFG.RUSH_ENABLED ? 'checked' : ''} style="margin-right:8px">
+                        <span style="font-size:14px;color:#555">启用抢购模式（验证码卡点确认）</span>
+                        <span title="开启后：第一轮验证码解完后不立即点确定，等到目标时间才提交。&#10;抢购时间过后恢复正常自动确认。" style="margin-left:6px;cursor:help;color:#999;font-size:14px;border:1px solid #ccc;border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1">?</span>
+                    </label>
+                    <div style="display:flex;align-items:center;gap:8px;margin:6px 0 0 24px">
+                        <span style="font-size:13px;color:#888">目标时间：</span>
+                        <input type="number" id="glm-rh" value="${CFG.RUSH_TARGET_HOUR}" min="0" max="23" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
+                        <span style="font-size:14px;color:#888">:</span>
+                        <input type="number" id="glm-rm" value="${CFG.RUSH_TARGET_MIN}" min="0" max="59" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
+                        <span style="font-size:14px;color:#888">:</span>
+                        <input type="number" id="glm-rs" value="${CFG.RUSH_TARGET_SEC}" min="0" max="59" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
+                    </div>
+                </div>
             </div>
             <div style="display:flex;justify-content:space-between;gap:10px">
                 <button id="glm-multi" style="padding:8px 16px;border:1px solid #52c41a;background:#f6ffed;color:#52c41a;border-radius:6px;cursor:pointer;font-weight:600">🚀 一键多开</button>
@@ -913,6 +1118,11 @@
                 AUTO_CLICK_SUB    : panel.querySelector('#glm-acs').checked,
                 AUTO_CAPTCHA_CLICK: panel.querySelector('#glm-acc').checked,
                 AUTO_CAPTCHA_CONFIRM: panel.querySelector('#glm-acf').checked,
+                TEST_MODE: panel.querySelector('#glm-tm').checked,
+                RUSH_ENABLED: panel.querySelector('#glm-re').checked,
+                RUSH_TARGET_HOUR: parseInt(panel.querySelector('#glm-rh').value) || 9,
+                RUSH_TARGET_MIN: parseInt(panel.querySelector('#glm-rm').value) || 59,
+                RUSH_TARGET_SEC: parseInt(panel.querySelector('#glm-rs').value) || 58,
                 SAFE_DEFAULTS_VERSION,
             });
             ov.remove(); alert('已保存，即将刷新。'); location.reload();
@@ -923,14 +1133,89 @@
     // ═══════════════════════════════════════════════════════════════════════════
     //  主循环
     // ═══════════════════════════════════════════════════════════════════════════
+    // 弹窗首次可见时间记录（防止刚出现就误关闭）
+    let popupFirstSeen = 0;
+    const POPUP_MIN_MS = 800;
+
     function tick() {
         if (state === 'DONE') return;
-        if (ensureDiscountEntry()) return;
- 
+
+        // ESC 关闭弹窗后立即触发特惠订阅重检
+        if (pendingRecheck) {
+            pendingRecheck = false;
+            state = 'SCANNING'; qIdx = 0; sweepRestocks = []; sweepBusyCount = 0;
+            const r = findOtherSubscriptionBtn();
+            if (r && r.ok === 1) {
+                taskTarget = { tab: -1, pkg: -1, text: r.text }; taskPhase = 'IDLE'; taskRLCount = 0;
+                state = 'TASK_UNIT';
+                setBar(`🎯 发现可购（特惠订阅），即将点击...`, '#389e0d');
+                return;
+            }
+        }
+
+        // 全局弹窗监控：任何时候出现支付弹窗、限流弹窗、无效弹窗，根据设置自动处理
+        const rlw = findRLModal();
+        if (rlw) {
+            popupFirstSeen = popupFirstSeen || Date.now();
+            if (Date.now() - popupFirstSeen < POPUP_MIN_MS) { setBar('⏳ 弹窗出现，等待稳定后处理...', '#d46b08'); return; }
+            if (CFG.AUTO_CLOSE_INVALID) {
+                closeModal(rlw);
+                popupFirstSeen = 0;
+                console.log('[GLM] tick 自动关闭限流弹窗');
+            } else {
+                setBar('⚠️ 限流弹窗（"购买人数较多"），请手动关闭后重试', '#d46b08');
+            }
+            return;
+        }
+        const payDlg = getPayDialog();
+        if (payDlg) {
+            popupFirstSeen = popupFirstSeen || Date.now();
+            if (Date.now() - popupFirstSeen < POPUP_MIN_MS) { setBar('⏳ 支付弹窗出现，等待稳定后处理...', '#d46b08'); return; }
+            const verdict = checkPayDialog();
+            if (verdict === 'close') {
+                if (CFG.AUTO_CLOSE_INVALID) {
+                    closePayDialog();
+                    popupFirstSeen = 0;
+                    console.log('[GLM] tick 自动关闭支付弹窗(', verdict, ')');
+                } else {
+                    state = 'DONE';
+                    popupFirstSeen = 0;
+                    setBar('⚠️ 检测到异常支付弹窗，请手动确认是否需要扫码！', '#d46b08');
+                }
+                return;
+            }
+            if (verdict === 'keep') {
+                popupFirstSeen = 0;
+                if (taskPhase !== 'PAYING') {
+                    if (everSucceeded) showPayAlarm();
+                    setBar('💳 <b>支付弹窗已出现！请立即扫码支付！</b>', '#16a34a');
+                }
+                return;
+            }
+        }
+        popupFirstSeen = 0;
+
+        // 抢购确认后：支付弹窗曾经出现过且现在已消失 → 清除锁定，恢复正常流程
+        if (window.__glmRushConfirmed && window.__glmRushDialogSeen) {
+            window.__glmRushConfirmed = 0;
+            window.__glmRushDialogSeen = 0;
+            console.log('[GLM] rush payment dialog closed by user, resuming normal flow');
+        }
+
+        // 特惠订阅兜底检测（任一时间发现特惠订阅按钮就进入 TASK_UNIT）
+        if (state === 'SCANNING') {
+            const r = findOtherSubscriptionBtn();
+            if (r && r.ok === 1) {
+                taskTarget = { tab: -1, pkg: -1, text: r.text }; taskPhase = 'IDLE'; taskRLCount = 0;
+                state = 'TASK_UNIT';
+                setBar(`🎯 发现可购（特惠订阅），即将点击...`, '#389e0d');
+                return;
+            }
+        }
+
         if (state === 'SLEEPING') {
             const rem = sleepUntil - Date.now();
             if (rem <= 0) {
-                // v8.0: 黄金时间禁止刷新
                 if (isGoldenTime()) {
                     setBar('🔥 黄金时间！取消刷新，继续高频监控！', '#ff4d4f');
                     state = 'SCANNING'; qIdx = 0; sweepRestocks = [];
@@ -945,13 +1230,23 @@
         if (state === 'TASK_UNIT') { doTaskUnit(); return; }
         doScan();
     }
- 
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  SCANNING / TASK_UNIT 逻辑
     // ═══════════════════════════════════════════════════════════════════════════
     function doScan() {
         if (qIdx >= scanQueue.length) { onSweepDone(); return; }
         const { tab, pkg } = scanQueue[qIdx];
+        if (tab === -1) {
+            const r = findOtherSubscriptionBtn();
+            if (r && r.ok === 1) {
+                taskTarget = { tab: -1, pkg: -1, text: r.text }; taskPhase = 'IDLE'; taskRLCount = 0;
+                state = 'TASK_UNIT';
+                setBar(`🎯 发现可购（特惠订阅），即将点击...`, '#389e0d');
+                return;
+            }
+            qIdx++; return;
+        }
         const te = tabEl(tab);
         if (!te) return;
         if (!te.classList.contains('active')) {
@@ -959,13 +1254,20 @@
             lastTabSwitch = Date.now(); setBar(`🔄 切换到 ${TABS_MAP[tab]}...`); return;
         }
         if (Date.now() - lastTabSwitch < 400) return;
- 
+
         const b = btnEl(pkg);
         if (canBuy(b)) {
             taskTarget = { tab, pkg }; taskPhase = 'IDLE'; taskRLCount = 0;
-            soldOutHits[`${tab}-${pkg}`] = 0;
             setS(tab, pkg, 0); state = 'TASK_UNIT';
             setBar(`🎯 发现可购！${TABS_MAP[tab]} · ${PKGS_MAP[pkg]}，即将点击...`, '#389e0d');
+            return;
+        }
+
+        const otherBtn = findOtherSubscriptionBtn();
+        if (otherBtn && otherBtn !== b) {
+            taskTarget = { tab: -1, pkg: -1, btn: otherBtn }; taskPhase = 'IDLE'; taskRLCount = 0;
+            state = 'TASK_UNIT';
+            setBar(`🎯 发现可购（特惠订阅），即将点击...`, '#389e0d');
             return;
         }
 
@@ -977,12 +1279,18 @@
 
         const ri = parseRestock(b?.innerText);
         if (ri?.dateStr === todayStr() && ri.msUntil > 0) sweepRestocks.push(ri);
- 
+
         setBar(`🔍 扫描 ${TABS_MAP[tab]} · ${PKGS_MAP[pkg]} (${qIdx + 1}/${scanQueue.length})`);
         qIdx++;
     }
  
     function onSweepDone() {
+        // 空队列 + sentinel → 持续轮询查找特惠订阅
+        if (scanQueue.length === 1 && scanQueue[0].tab === -1) {
+            qIdx = 0; sweepRestocks = []; sweepBusyCount = 0;
+            setBar('🔍 未找到可购套餐或特惠订阅，持续监控中...', '#434343');
+            return;
+        }
         if (sweepBusyCount >= scanQueue.length) {
             setBar('⚡ 所有套餐系统繁忙(batch-preview 555)，刷新页面重试...', '#d46b08');
             setTimeout(() => location.replace(GLM_CODING_URL()), 1500);
@@ -990,34 +1298,24 @@
         }
         if (!sweepRestocks.length && isGoldenTime()) {
             setBar(`🔥 黄金时间！系统繁忙中，持续高频监控！`, '#ff4d4f');
-            qIdx = 0; sweepRestocks = []; sweepBusyCount = 0; emptySweepCount = 0; return;
+            qIdx = 0; sweepRestocks = []; sweepBusyCount = 0; return;
         }
         if (!sweepRestocks.length) {
-            emptySweepCount++;
-            qIdx = 0; sweepRestocks = []; sweepBusyCount = 0;
-            if (emptySweepCount < EMPTY_SWEEP_CONFIRM) {
-                setBar(`📭 暂未发现可买/补货时间，继续确认 ${emptySweepCount}/${EMPTY_SWEEP_CONFIRM}...`, '#434343');
-                return;
-            }
-            state = 'SLEEPING';
-            sleepUntil = Date.now() + EMPTY_SWEEP_RETRY_MS;
-            setBar(`📭 连续 ${EMPTY_SWEEP_CONFIRM} 轮未发现库存，${fmt(EMPTY_SWEEP_RETRY_MS)} 后重新扫描。脚本未停止。`, '#434343');
-            return;
+            state = 'DONE'; setBar('📭 今日全部售罄，脚本停止。', '#434343'); triggerPromo(); return;
         }
-        emptySweepCount = 0;
         sweepRestocks.sort((a, b) => a.msUntil - b.msUntil);
         const nearest = sweepRestocks[0];
         const sleep   = calcSleepMs(nearest.msUntil);
  
-        // ── v8.0: 黄金时间（9:30-10:10）禁止刷新页面 ──────────────────────────
+        // ── v8.0: 黄金时间（9:50-10:10）禁止刷新页面 ──────────────────────────
         if (isGoldenTime()) {
             setBar(`🔥 黄金时间！补货倒计时 <b>${fmt(nearest.msUntil)}</b>，禁止刷新，高频监控！`, '#ff4d4f');
-            qIdx = 0; sweepRestocks = []; sweepBusyCount = 0; return;
+            qIdx = 0; sweepRestocks = []; return;
         }
  
         if (sleep === 0) {
             setBar(`⚡ 补货倒计时 <b>${fmt(nearest.msUntil)}</b>，高频监控！`, '#d4380d');
-            qIdx = 0; sweepRestocks = []; sweepBusyCount = 0; return;
+            qIdx = 0; sweepRestocks = []; return;
         }
         if (CFG.SMART_REFRESH) {
             state = 'SLEEPING'; sleepUntil = Date.now() + sleep;
@@ -1026,7 +1324,93 @@
     }
  
     function doTaskUnit() {
-        const { tab, pkg } = taskTarget;
+        const { tab, pkg, btn: altBtn } = taskTarget;
+        if (tab === -1 && !altBtn) {
+            if (taskPhase === 'IDLE') {
+                const r = findOtherSubscriptionBtn();
+                if (!r || r.ok !== 1) {
+                    exitTask(); return;
+                }
+                if (!CFG.AUTO_CLICK_SUB) {
+                    showPayAlarm();
+                    setBar(`🎯 <b>发现可购（特惠订阅）</b>，请手动点击订阅`, '#389e0d');
+                    return;
+                }
+                PS.result = null; PS.inProgress = true;
+                clickSubBtn2(r.pkg); taskClickTime = Date.now(); taskPhase = 'WAITING';
+                setBar(`🔄 已点击特惠订阅，接口重试中...（限流 ${taskRLCount}/${MAX_RL}）`, '#d46b08');
+                return;
+            }
+            if (taskPhase === 'WAITING') {
+                const rlw = findRLModal();
+                if (rlw) {
+                    if (isAirplanePayDialog(rlw)) {
+                        if (PS.result !== 'busy' && PS.result !== 'sold_out') {
+                            setBar('⚠️ 特惠订阅: API返回200但弹窗显示小飞机，可能是前后端不一致。不自动关闭。', '#ff4d4f');
+                            return;
+                        }
+                        if (!CFG.AUTO_CLOSE_INVALID) {
+                            state = 'DONE';
+                            setBar('Auto-close disabled. Please check this payment/rate-limit popup manually.', '#d46b08');
+                            return;
+                        }
+                        closeModal(rlw);
+                        taskTarget = null; taskPhase = 'IDLE'; taskRLCount = 0;
+                        state = 'SCANNING';
+                        setBar(`✈️ 特惠订阅: 系统繁忙，关闭弹窗，继续扫描...`, '#d46b08');
+                        return;
+                    }
+                    if (!CFG.AUTO_CLOSE_INVALID) {
+                        setBar('⚠️ 特惠订阅: 限流弹窗，请手动关闭后重试', '#d46b08');
+                        return;
+                    }
+                    closeModal(rlw); taskRLCount++;
+                    if (taskRLCount >= MAX_RL) {
+                        if (isGoldenTime()) {
+                            setBar('🔥 黄金时间！连续限流但禁止刷新，继续重试！', '#ff4d4f');
+                            taskRLCount = 0; taskPhase = 'IDLE';
+                        } else {
+                            setBar(`🔁 连续 ${MAX_RL} 次限流，即将刷新...`, '#cf1322');
+                            setTimeout(() => location.replace(GLM_CODING_URL()), 50);
+                        }
+                        return;
+                    }
+                    setBar(`⚠️ 特惠订阅: 限流 ${taskRLCount}/${MAX_RL}，自动关闭后重试...`, '#d46b08');
+                    taskPhase = 'IDLE'; return;
+                }
+                if (isPayDialog()) {
+                    const verdict = checkPayDialog();
+                    if (verdict === 'close') {
+                        if (!CFG.AUTO_CLOSE_INVALID) {
+                            state = 'DONE';
+                            setBar('⚠️ 特惠订阅: 检测到异常支付弹窗，请手动确认！', '#d46b08');
+                            return;
+                        }
+                        closePayDialog();
+                        taskTarget = null; taskPhase = 'IDLE'; taskRLCount = 0;
+                        state = 'SCANNING';
+                        setBar(`📉 特惠订阅: 支付弹窗异常，关闭弹窗，继续扫描...`, '#d46b08');
+                        return;
+                    }
+                    if (verdict === 'warn') {
+                        state = 'DONE';
+                        setBar('⚠️ 特惠订阅: 弹窗出现小飞机但接口无异常，请手动确认！', '#ff4d4f');
+                        return;
+                    }
+                }
+                if (isSuccessDialog()) {
+                    state = 'DONE';
+                    mtNotifyClick();
+                    setBar('🎉 特惠订阅成功！恭喜！', '#237804'); return;
+                }
+                const elapsed = Date.now() - taskClickTime;
+                setBar(`⌛ 特惠订阅: 等待中... (${(elapsed/1000).toFixed(1)}s)`, '#1677ff');
+                if (elapsed > 3000) {
+                    if (isSoldOut(altBtn)) exitTask(); else taskPhase = 'IDLE';
+                }
+                return;
+            }
+        }
         const te = tabEl(tab);
         if (!te) return;
         if (!te.classList.contains('active')) { te.click(); return; }
@@ -1105,9 +1489,11 @@
                         setBar('⚠️ 检测到异常支付弹窗，请手动确认是否需要扫码！', '#d46b08');
                         return;
                     }
-                    const reason = PS.result === 'busy'
-                        ? `✈️ 系统繁忙(${PS.rawCode || 555})，关闭弹窗`
-                        : `📉 ${TABS_MAP[taskTarget.tab]}·${PKGS_MAP[taskTarget.pkg]} 售罄`;
+                    const reason = everSucceeded
+                        ? `📉 支付弹窗无价格（无效支付），关闭弹窗`
+                        : PS.result === 'busy'
+                            ? `✈️ 系统繁忙(${PS.rawCode || 555})，关闭弹窗`
+                            : `📉 ${TABS_MAP[taskTarget.tab]}·${PKGS_MAP[taskTarget.pkg]} 售罄`;
                     closePayDialog();
                     lastCloseReason = reason;
                     const nextIdx = qIdx + 1;
@@ -1137,6 +1523,7 @@
 
             if (isSuccessDialog()) {
                 setS(tab, pkg, 2); state = 'DONE';
+                mtNotifyClick();
                 setBar('🎉 订阅成功！恭喜！', '#237804'); return;
             }
 
@@ -1159,13 +1546,14 @@
     }
  
     function exitTask() {
-        // v8.0: 黄金时间内不标记售罄，持续重试
-        if (!isGoldenTime()) {
-            const key = `${taskTarget.tab}-${taskTarget.pkg}`;
-            soldOutHits[key] = (soldOutHits[key] || 0) + 1;
-            if (soldOutHits[key] >= SOLD_OUT_CONFIRM) setS(taskTarget.tab, taskTarget.pkg, 1);
+        if (taskTarget && taskTarget.tab >= 0) {
+            if (!isGoldenTime()) {
+                setS(taskTarget.tab, taskTarget.pkg, 1);
+            }
+            setBar(`📦 ${TABS_MAP[taskTarget.tab]} · ${PKGS_MAP[taskTarget.pkg]} 售罄，继续...`);
+        } else {
+            setBar(`📦 特惠订阅 不可用，继续...`);
         }
-        setBar(`📦 ${TABS_MAP[taskTarget.tab]} · ${PKGS_MAP[taskTarget.pkg]} 售罄，继续...`);
         qIdx++; taskTarget = null; taskPhase = 'IDLE'; taskRLCount = 0;
         state = 'SCANNING';
     }
@@ -1195,7 +1583,50 @@
     }
  
     if (checkLogin()) {
-        setInterval(tick, CFG.CHECK_INTERVAL);
+        // 清除失效的旧抢购通知（超过 30s 的）
+        if (GM_getValue('mt_clicked', 0) && (Date.now() - GM_getValue('mt_clicked', 0)) > 30000) {
+            GM_setValue('mt_clicked', 0);
+        }
+        let pageReady = false;
+        const _readyCheck = setInterval(() => {
+            if (document.querySelector('.glm-coding-package-list') || document.querySelector('#switchTabBox')) {
+                pageReady = true; clearInterval(_readyCheck);
+                setBar('✅ 套餐列表已加载，3秒后开始监控...', '#1677ff');
+                setTimeout(() => { setBar('✅ 页面已就绪，开始监控...', '#1677ff'); }, 3000);
+            }
+        }, 200);
+        setTimeout(() => { pageReady = true; clearInterval(_readyCheck); }, 12000);
+        let pageReadyAt = 0, tabPreSwitched = false;
+        const _origTick = () => {
+            if (!pageReady) { setBar('⏳ 页面加载中，等待套餐列表...', '#1677ff'); return; }
+            if (!pageReadyAt) { pageReadyAt = Date.now(); }
+            // 多开：收到其他窗口的抢购成功通知（30s 内有效）→ DONE
+            const mtClickedTs = GM_getValue('mt_clicked', 0);
+            if (mtChannel && state !== 'DONE' && myWi > 0 && mtClickedTs && (Date.now() - mtClickedTs) < 30000) {
+                state = 'DONE';
+                setBar('⏹️ 其他窗口已抢购成功，本窗口停止', '#434343');
+                return;
+            }
+            if (Date.now() - pageReadyAt < 3000) {
+                setBar('⏳ 页面加载中，等待验证码脚本...', '#1677ff');
+                if (!tabPreSwitched && tabs && tabs.length) {
+                    const te = tabEl(tabs[0]);
+                    if (te && !te.classList.contains('active')) {
+                        te.click(); te.scrollIntoView({ behavior: 'auto', block: 'center' });
+                        console.log('[GLM] 缓冲期预切换标签页到', TABS_MAP[tabs[0]]);
+                    }
+                    tabPreSwitched = true;
+                }
+                return;
+            }
+            tick();
+        };
+        // 多开错开：myWi=0 立即启动，myWi=N 延迟 N*MT_STAGGER ms
+        const startDelay = Math.max(0, mtInitialDelay);
+        setTimeout(() => {
+            setInterval(_origTick, CFG.CHECK_INTERVAL);
+            console.log(`[GLM] MT: tab #${myWi} interval started after ${startDelay}ms stagger`);
+        }, startDelay);
         const _startDOM = () => {
             setInterval(forceEnableButtons, 500);
             new MutationObserver(forceEnableButtons).observe(document.body, {
@@ -1216,15 +1647,51 @@
     if (window.__glmCaptchaPromptBridge === 1) return;
     window.__glmCaptchaPromptBridge = 1;
 
-    const RUSH_CONFIG = {
-        enabled: true,
-        targetHour: 10,
-        targetMin: 0,
-        targetSec: 0,
-        staggerMs: 2000,
-        pollInterval: 50,
-        pollTimeout: 20000,
-    };
+    const RUSH_CFG = (() => {
+        try {
+            const raw = GM_getValue('glm_coding_config_v5', '{}');
+            const cfg = JSON.parse(raw || '{}');
+            return {
+                enabled: cfg.RUSH_ENABLED === true,
+                targetHour: parseInt(cfg.RUSH_TARGET_HOUR) || 9,
+                targetMin: parseInt(cfg.RUSH_TARGET_MIN) || 59,
+                targetSec: parseInt(cfg.RUSH_TARGET_SEC) || 58,
+                staggerMs: 2000,
+            };
+        } catch {
+            return { enabled: false, targetHour: 9, targetMin: 59, targetSec: 58, staggerMs: 2000 };
+        }
+    })();
+
+    function getWindowIndex() {
+        try {
+            const params = new URLSearchParams(location.search);
+            return parseInt(params.get('wi') || '0', 10);
+        } catch { return 0; }
+    }
+
+    function getTargetTimestamp() {
+        const now = new Date();
+        const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+            RUSH_CFG.targetHour, RUSH_CFG.targetMin, RUSH_CFG.targetSec, 0);
+        const offset = getWindowIndex() * RUSH_CFG.staggerMs;
+        return target.getTime() + offset;
+    }
+
+    function waitForTargetTime() {
+        return new Promise(resolve => {
+            const targetTs = getTargetTimestamp();
+            const remaining = targetTs - Date.now();
+            if (remaining <= 0) { resolve(); return; }
+            console.log('[captcha-rush] wait ' + (remaining/1000).toFixed(1) + 's for target time...');
+            function check() {
+                if (Date.now() >= targetTs) resolve();
+                else setTimeout(check, 50);
+            }
+            setTimeout(check, Math.max(0, remaining - 5000));
+        });
+    }
+
     const CAPTCHA_CFG = (() => {
         try {
             const raw = GM_getValue('glm_coding_config_v5', '{}');
@@ -1234,19 +1701,6 @@
         }
     })();
 
-    function getWindowIndex() {
-        const params = new URLSearchParams(location.search);
-        return parseInt(params.get('wi') || '0', 10);
-    }
-
-    function getTargetTimestamp() {
-        const now = new Date();
-        const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
-            RUSH_CONFIG.targetHour, RUSH_CONFIG.targetMin, RUSH_CONFIG.targetSec, 0);
-        const offset = getWindowIndex() * RUSH_CONFIG.staggerMs;
-        return target.getTime() + offset;
-    }
-
     let lastCaptchaText = '';
     let captchaSent = false;
     let rushState = 'idle';
@@ -1254,58 +1708,32 @@
     function serverRequest(method, path, data) {
         return new Promise((resolve, reject) => {
             try {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
-                    GM_xmlhttpRequest({
-                        method: method,
-                        url: 'http://localhost:8888' + path,
-                        headers: { 'Content-Type': 'application/json' },
-                        data: data ? JSON.stringify(data) : undefined,
-                        onload: (r) => {
-                            try { resolve(JSON.parse(r.responseText)); }
-                            catch { resolve({ raw: r.responseText }); }
-                        },
-                        onerror: (e) => reject(new Error('GM_xmlhttpRequest error: ' + e)),
-                    });
-                } else {
-                    fetch('http://localhost:8888' + path, {
-                        method: method,
-                        headers: { 'Content-Type': 'application/json' },
-                        body: data ? JSON.stringify(data) : undefined,
-                    }).then(r => r.json()).then(resolve).catch(reject);
-                }
+                var url = 'http://localhost:8888' + path;
+                var body = data ? JSON.stringify(data) : undefined;
+                // 优先 fetch() —— 浏览器原生无连接数限制
+                fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body,
+                }).then(function(r) { return r.json(); }).then(resolve).catch(function() {
+                    // CSP 限制时回退 GM_xmlhttpRequest
+                    if (typeof GM_xmlhttpRequest !== 'undefined') {
+                        GM_xmlhttpRequest({
+                            method: method,
+                            url: url,
+                            headers: { 'Content-Type': 'application/json' },
+                            data: body,
+                            onload: function(r) {
+                                try { resolve(JSON.parse(r.responseText)); }
+                                catch { resolve({ raw: r.responseText }); }
+                            },
+                            onerror: reject,
+                        });
+                    } else {
+                        reject(new Error('fetch failed'));
+                    }
+                });
             } catch (e) { reject(e); }
-        });
-    }
-
-    function pollResult(ts) {
-        return new Promise((resolve, reject) => {
-            const start = Date.now();
-            function poll() {
-                if (Date.now() - start > RUSH_CONFIG.pollTimeout) {
-                    reject(new Error('poll timeout'));
-                    return;
-                }
-                serverRequest('POST', '/result', { ts: ts }).then(d => {
-                    if (d.has_result) resolve(d.result);
-                    else setTimeout(poll, RUSH_CONFIG.pollInterval);
-                }).catch(() => setTimeout(poll, RUSH_CONFIG.pollInterval));
-            }
-            poll();
-        });
-    }
-
-    function waitForTargetTime() {
-        return new Promise(resolve => {
-            const targetTs = getTargetTimestamp();
-            const remaining = targetTs - Date.now();
-            if (remaining <= 0) { resolve(); return; }
-            const winIdx = getWindowIndex();
-            console.log('[captcha-rush] #' + winIdx + ' wait ' + Math.ceil(remaining / 1000) + 's to target...');
-            function check() {
-                if (Date.now() >= targetTs) resolve();
-                else setTimeout(check, 50);
-            }
-            setTimeout(check, Math.max(0, remaining - 5000));
         });
     }
 
@@ -1333,108 +1761,6 @@
             }
         }
         return false;
-    }
-
-    function rushStatus(html, bg) {
-        try { setBar(html, bg); } catch (e) {}
-    }
-
-    async function handleCaptchaRush(chars) {
-        var winIdx = getWindowIndex();
-        var payloadText = chars.join('');
-        rushState = 'solving';
-        rushStatus('\uD83D\uDD10 [#' + winIdx + '] \u9A8C\u8BC1\u7801\u8BC6\u522B\u4E2D: ' + payloadText + '...', '#1890ff');
-
-        try {
-            var sendRes = await serverRequest('POST', '/captcha', { text: payloadText, ts: Date.now() });
-            var ts = sendRes.ts;
-            if (!ts) throw new Error('no ts');
-            console.log('[captcha-rush] [#' + winIdx + '] sent ts=' + ts);
-
-            rushStatus('\u23F3 [#' + winIdx + '] \u7B49\u5F85\u8BC6\u522B...', '#faad14');
-
-            var result = await pollResult(ts);
-
-            if (!result || !result.result || !result.result.success) {
-                rushState = 'idle';
-                captchaSent = false;
-                lastCaptchaText = '';
-                rushStatus('\u274C [#' + winIdx + '] \u8BC6\u522B\u5931\u8D25: ' + (result && result.result ? result.result.error : '?') + ' \u2192 \u5FEB\u901F\u91CD\u8BD5', '#ff4d4f');
-                return;
-            }
-
-            var predText = result.result.pred_text;
-            var conf = result.result.confidence;
-            console.log('[captcha-rush] [#' + winIdx + '] done: ' + predText + ' conf=' + conf);
-
-            rushStatus('\u2705 [#' + winIdx + '] \u9A8C\u8BC1\u7801\u5DF2\u89E3: ' + predText + ' (' + (conf * 100).toFixed(0) + '%)', '#52c41a');
-
-            var coords = result.result.click_coords || [];
-            console.log('[captcha-rush] [#' + winIdx + '] click_coords count=' + coords.length + ' result=' + JSON.stringify(result.result).substring(0, 200));
-            if (coords.length > 0) {
-                var clickTarget = document.querySelector('.tencent-captcha-dy__verify-bg-img') ||
-                                  document.querySelector('[class*="verify-bg"]') ||
-                                  document.querySelector('.tencent-captcha-dy__image-area') ||
-                                  findCaptchaContainer();
-                if (clickTarget) {
-                    console.log('[captcha-rush] click target: ' + clickTarget.tagName + '.' + (clickTarget.className||'').substring(0,40));
-                    var tgtRect = clickTarget.getBoundingClientRect();
-                    console.log('[captcha-rush] target rect: ' + Math.round(tgtRect.width) + 'x' + Math.round(tgtRect.height) + ' @ (' + Math.round(tgtRect.left) + ',' + Math.round(tgtRect.top) + ')');
-                    rushStatus('\u2705 [#' + winIdx + '] \u6B63\u5728\u70B9\u51FB ' + coords.length + ' \u5B57...', '#237804');
-                    for (var ci = 0; ci < coords.length; ci++) {
-                        var c = coords[ci];
-                        var nx = c.nx || (c.rel_x / 422);
-                        var ny = c.ny || (c.rel_y / 305);
-                        var cx = tgtRect.left + nx * tgtRect.width;
-                        var cy = tgtRect.top + ny * tgtRect.height;
-                        console.log('[captcha-rush] click #' + (ci+1) + ' "' + c.char + '" norm=(' + nx.toFixed(3) + ',' + ny.toFixed(3) + ') screen=(' + Math.round(cx) + ',' + Math.round(cy) + ')');
-                        dispatchClickAt(clickTarget, nx * tgtRect.width, ny * tgtRect.height, String(ci + 1));
-                        await new Promise(function(r) { setTimeout(r, 350); });
-                    }
-                    rushStatus('\u2705 [#' + winIdx + '] \u70B9\u51FB\u5B8C\u6215! \u7B49\u5F85\u5361\u70B9...', '#237804');
-                } else {
-                    console.warn('[captcha-rush] [#' + winIdx + '] no click target found');
-                }
-            }
-
-            await new Promise(function(r) { setTimeout(r, 500); });
-            rushState = 'idle';
-
-            (async function() {
-                var isRushMode = isGoldenTime();
-                if (isRushMode) {
-                    await waitForTargetTime();
-                    rushStatus('\uD83D\uDE80 [#' + winIdx + '] \u5361\u70B9\u53D1\u9001!', '#ff4d4f');
-                } else {
-                    await new Promise(function(r) { setTimeout(r, 300); });
-                    rushStatus('\uD83D\uDE80 [#' + winIdx + '] \u81EA\u52A8\u786E\u8BA4...', '#237804');
-                }
-                rushState = 'confirming';
-                var clicked = findAndClickConfirm();
-                if (clicked) {
-                    rushState = 'confirmed';
-                    rushStatus('\uD83C\uDFAF [#' + winIdx + '] \u5DF2\u70B9\u786E\u8BA4!' + (isRushMode ? ' (\u5361\u70B0)' : ''), '#237804');
-                } else {
-                    rushState = 'idle';
-                    rushStatus('\u26A0\uFE0F [#' + winIdx + '] \u672A\u627E\u5230\u786E\u8BA4\u6309\u94AE!', '#faad14');
-                }
-            })();
-
-        } catch (e) {
-            rushState = 'idle';
-            captchaSent = false;
-            lastCaptchaText = '';
-            console.error('[captcha-rush] error:', e);
-            rushStatus('\u274C [#' + getWindowIndex() + '] \u5F02\u5E38: ' + e.message + ' \u2192 \u5FEB\u901F\u91CD\u8BD5', '#ff4d4f');
-        }
-    }
-
-    function visible(el) {
-        if (!el) return false;
-        var style = getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') return false;
-        var rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
     }
 
     function getCaptchaPromptText(el) {
@@ -1749,15 +2075,6 @@
         return null;
     }
 
-    function captchaBgUrlFrom(el) {
-        if (!el) return '';
-        var bg = '';
-        try { bg = (el.style && el.style.backgroundImage) || window.getComputedStyle(el).backgroundImage || ''; } catch(e) {}
-        var match = bg.match(/url\(["']?([^"')]+)/);
-        if (!match) return '';
-        try { return new URL(match[1], location.href).href; } catch(e) { return match[1]; }
-    }
-
     function findCaptchaBgElementDirect() {
         var selectors = [
             '#slideBg',
@@ -1777,34 +2094,10 @@
         return null;
     }
 
-    function fetchCaptchaImageDirect(url) {
-        return new Promise(function(resolve, reject) {
-            if (typeof GM_xmlhttpRequest !== 'undefined') {
-                GM_xmlhttpRequest({
-                    method: 'GET',
-                    url: url,
-                    responseType: 'blob',
-                    onload: function(r) {
-                        var reader = new FileReader();
-                        reader.onload = function() { resolve(reader.result); };
-                        reader.onerror = function() { reject(new Error('FileReader failed')); };
-                        reader.readAsDataURL(r.response);
-                    },
-                    onerror: function() { reject(new Error('image download failed')); }
-                });
-                return;
-            }
-            fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
-                var reader = new FileReader();
-                reader.onload = function() { resolve(reader.result); };
-                reader.onerror = function() { reject(new Error('FileReader failed')); };
-                reader.readAsDataURL(blob);
-            }).catch(reject);
-        });
-    }
-
     async function handleCaptchaDirectInPage(chars) {
-        if (!CAPTCHA_CFG.AUTO_CAPTCHA_CLICK) {
+        var autoClick = CAPTCHA_CFG.AUTO_CAPTCHA_CLICK;
+        var autoConfirm = CAPTCHA_CFG.AUTO_CAPTCHA_CONFIRM;
+        if (!autoClick) {
             console.log('[captcha-direct-page] auto captcha click disabled');
             return;
         }
@@ -1817,9 +2110,8 @@
             var bgUrl = captchaBgUrlFrom(bgEl);
             if (!bgUrl) throw new Error('no captcha background url');
             console.log('[captcha-direct-page] bg:', bgUrl.substring(0, 120));
-            var image = await fetchCaptchaImageDirect(bgUrl);
-            var resp = await serverRequest('POST', '/captcha_direct', {
-                image: image,
+            var resp = await serverRequest('POST', '/captcha_direct_url', {
+                url: bgUrl,
                 text: payloadText,
                 remark: payloadText,
                 ts: Date.now(),
@@ -1839,10 +2131,27 @@
                 if (!Number.isFinite(ny) && Number.isFinite(Number(c.rel_y))) ny = Number(c.rel_y) / rect.height;
                 if (!Number.isFinite(nx) || !Number.isFinite(ny)) continue;
                 dispatchClickAt(bgEl, nx * rect.width, ny * rect.height, c.char || String(i + 1));
-                await new Promise(function(r) { setTimeout(r, 220); });
+                await new Promise(function(r) { setTimeout(r, 100); });
             }
-            await new Promise(function(r) { setTimeout(r, 350); });
-            if (CAPTCHA_CFG.AUTO_CAPTCHA_CONFIRM) {
+            // 抢购模式：目标时间前不点确定，到点才提交
+            if (RUSH_CFG.enabled) {
+                var targetTs = getTargetTimestamp();
+                if (Date.now() < targetTs) {
+                    console.log('[captcha-rush] rush active, waiting ' + ((targetTs - Date.now())/1000).toFixed(1) + 's until target...');
+                    rushState = 'idle';
+                    await waitForTargetTime();
+                    console.log('[captcha-rush] target time reached, confirming...');
+                    var clicked = findAndClickConfirm();
+                    console.log('[captcha-rush] confirm ' + (clicked ? 'success' : 'no button found'));
+                    if (clicked) {
+                        window.__glmRushConfirmed = Date.now();
+                    }
+                    return;
+                }
+            }
+
+            await new Promise(function(r) { setTimeout(r, 150); });
+            if (autoConfirm) {
                 findAndClickConfirm();
             } else {
                 console.log('[captcha-direct-page] captcha confirm is disabled; waiting for manual confirm');
@@ -1878,18 +2187,127 @@
             console.log('[captcha] page direct solver:', payloadText);
             handleCaptchaDirectInPage(found.chars).catch(function(e) { console.error('[captcha-direct-page] unhandled:', e); });
             return;
-            if (RUSH_CONFIG.enabled) {
-                handleCaptchaRush(found.chars).catch(function(e) { console.error('[captcha-rush] unhandled:', e); });
-            } else {
-                serverRequest('POST', '/captcha', { text: payloadText, ts: Date.now() })
-                    .then(function() { console.log('[captcha] legacy ok'); })
-                    .catch(function(e) { console.log('[captcha] legacy err:', e); });
-            }
         }
     }
 
-    setInterval(checkCaptchaPrompt, 50);
-    console.log('[captcha] bridge v2 started | rush=' + RUSH_CONFIG.enabled + ' | wi=' + getWindowIndex() + ' | target=10:' + String(RUSH_CONFIG.targetSec).padStart(2,'0') + '+' + (getWindowIndex() * RUSH_CONFIG.staggerMs / 1000) + 's');
-})();
+    setInterval(checkCaptchaPrompt, 200);
 
+    if (RUSH_CFG.enabled) {
+        console.log('[captcha] rush mode enabled, target=' + String(RUSH_CFG.targetHour).padStart(2,'0') + ':' + String(RUSH_CFG.targetMin).padStart(2,'0') + ':' + String(RUSH_CFG.targetSec).padStart(2,'0') + ' stagger=' + RUSH_CFG.staggerMs + 'ms wi=' + getWindowIndex());
+    }
+
+    // ── 测试模式 ──────────────────────────────────────────────────────────────
+    if (CFG.TEST_MODE) {
+        (function() {
+            var _tp = null, _tpTimer = null;
+            function tpCSS() {
+                if (document.getElementById('glm-tps')) return;
+                var s = document.createElement('style'); s.id = 'glm-tps';
+                s.textContent = '#glm-tp{position:fixed;bottom:60px;right:16px;z-index:2147483646;background:#fff;border:1px solid #d9d9d9;border-radius:10px;padding:12px 16px;font:13px/1.5 system-ui,sans-serif;color:#333;box-shadow:0 4px 20px rgba(0,0,0,.15);width:270px;transition:all .3s}#glm-tp .tph{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #f0f0f0}#glm-tp .tph b{font-size:14px}#glm-tp .tps{font-size:12px;padding:2px 8px;border-radius:10px;white-space:nowrap}#glm-tp .tps.ok{background:#f6ffed;color:#52c41a}#glm-tp .tps.err{background:#fff2f0;color:#ff4d4f}#glm-tp .tps.unk{background:#fafafa;color:#999}#glm-tp .tpr{font-size:12px;color:#555;margin-bottom:6px;min-height:18px}#glm-tp .tpb{display:flex;gap:6px;flex-wrap:wrap}#glm-tp .tpb button{padding:4px 10px;border:1px solid #d9d9d9;background:#fff;border-radius:4px;cursor:pointer;font-size:11px;transition:.15s}#glm-tp .tpb button:hover{border-color:#40a9ff;color:#40a9ff}#glm-tp .tpb button:disabled{opacity:.5;cursor:not-allowed}#glm-tp .tpl{font-size:11px;color:#888;margin-top:6px;padding-top:6px;border-top:1px solid #f0f0f0;word-break:break-all}';
+                document.head.appendChild(s);
+            }
+            function tpRender() {
+                tpCSS();
+                if (_tp) return;
+                _tp = document.createElement('div'); _tp.id = 'glm-tp';
+                _tp.innerHTML = '<div class="tph"><b>🧪 测试面板</b><span class="tps unk" id="tps">检测中...</span></div><div class="tpr" id="tpr">后端状态: 检测中...</div><div class="tpb"><button id="tp-ping">🏓 测试连接</button><button id="tp-ocr">🔍 测试OCR</button><button id="tp-confirm">✅ 测试确认</button></div><div class="tpl" id="tpl"></div>';
+                document.body.appendChild(_tp);
+                document.getElementById('tp-ping').onclick = tpPing;
+                document.getElementById('tp-ocr').onclick = tpOcr;
+                document.getElementById('tp-confirm').onclick = tpConfirm;
+                _tpTimer = setInterval(tpPing, 15000);
+                setTimeout(tpPing, 300);
+            }
+            function tpSetStatus(ok, msg) {
+                var s = document.getElementById('tps');
+                var r = document.getElementById('tpr');
+                if (!s || !r) return;
+                s.className = 'tps ' + (ok === true ? 'ok' : ok === false ? 'err' : 'unk');
+                s.textContent = ok === true ? '✓ 在线' : ok === false ? '✗ 离线' : '...';
+                r.textContent = msg || '后端状态: ' + (ok === true ? '正常' : ok === false ? '离线' : '检测中');
+            }
+            function tpLog(msg) {
+                var l = document.getElementById('tpl');
+                if (l) l.textContent = '📋 ' + msg;
+            }
+            async function tpPing() {
+                try {
+                    tpSetStatus(null, '后端状态: 检测中...');
+                    var resp = await serverRequest('GET', '/test');
+                    if (resp && resp.status === 'ok') {
+                        var info = '✓ ' + (resp.backend.ocr_mode || '?') + ' | 识别: ' + (resp.recognition.total || 0) + '次';
+                        if (resp.recognition && resp.recognition.last_result) {
+                            var last = resp.recognition.last_result.result || {};
+                            info += ' | 上次: ' + (last.pred_text || '?') + ' (' + ((last.confidence || 0) * 100).toFixed(0) + '%)';
+                        }
+                        tpSetStatus(true, '后端状态: ' + info);
+                    } else {
+                        tpSetStatus(false, '后端返回: 异常');
+                    }
+                } catch (e) {
+                    tpSetStatus(false, '连接失败: ' + (e.message || e));
+                }
+            }
+            async function tpOcr() {
+                tpLog('正在检测验证码...');
+                try {
+                    var found = findCaptchaPromptElement();
+                    if (!found) { tpLog('未检测到验证码弹窗'); return; }
+                    tpLog('发现验证码: ' + found.text);
+                    var bgEl = findCaptchaBgElementDirect();
+                    if (!bgEl) { tpLog('未找到验证码背景图'); return; }
+                    var bgUrl = captchaBgUrlFrom(bgEl);
+                    if (!bgUrl) { tpLog('未获取到背景图URL'); return; }
+                    tpLog('正在下载验证码图片...');
+                    var image = await fetchCaptchaImageDirect(bgUrl);
+                    tpLog('正在发送识别请求...');
+                    var resp = await serverRequest('POST', '/captcha_direct', {
+                        image: image,
+                        text: found.text,
+                        remark: found.text,
+                        ts: Date.now(),
+                        source: 'glm-test-mode'
+                    });
+                    var result = resp && resp.result;
+                    if (result && result.success && Array.isArray(result.click_coords)) {
+                        var pt = result.pred_text || '?';
+                        var conf = ((result.confidence || 0) * 100).toFixed(0);
+                        tpLog('✓ 识别成功: ' + pt + ' (' + conf + '%) 坐标: ' + result.click_coords.length + '个');
+                        if (result.click_coords.length > 0) {
+                            bgEl = findCaptchaBgElementDirect();
+                            if (bgEl) {
+                                var rect = bgEl.getBoundingClientRect();
+                                for (var i = 0; i < result.click_coords.length; i++) {
+                                    var c = result.click_coords[i];
+                                    var nx = Number(c.nx) || (Number(c.rel_x) / rect.width);
+                                    var ny = Number(c.ny) || (Number(c.rel_y) / rect.height);
+                                    if (Number.isFinite(nx) && Number.isFinite(ny)) {
+                                        dispatchClickAt(bgEl, nx * rect.width, ny * rect.height, c.char || String(i + 1));
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        tpLog('✗ 识别失败: ' + JSON.stringify(resp).substring(0, 160));
+                    }
+                } catch (e) {
+                    tpLog('✗ 识别异常: ' + (e.message || e));
+                }
+            }
+            function tpConfirm() {
+                try {
+                    var ok = findAndClickConfirm();
+                    tpLog(ok ? '✓ 已点击确认按钮' : '✗ 未找到确认按钮');
+                } catch (e) {
+                    tpLog('✗ 确认异常: ' + (e.message || e));
+                }
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', tpRender);
+            } else {
+                tpRender();
+            }
+        })();
+    }
+})();
 
