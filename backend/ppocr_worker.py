@@ -125,7 +125,13 @@ def run_ocr_worker_direct(core_id: int, req_queue, res_queue):
 
     try:
         recognizer = TextRecognition(model_name=MODEL_NAME, device="cpu", engine=ENGINE)
-        print(f"[ocr] Core {core_id} ready")
+        # ── 预缓存：预热 OCR 模型（首次推理触发 JIT 编译 + 模型缓存）────
+        _warm_img = np.zeros((32, 100, 3), dtype=np.uint8)
+        predictor_w = recognizer.paddlex_predictor
+        _warm_batch = predictor_w.pre_tfs["ReisizeNorm"](imgs=[_warm_img])
+        _warm_x = predictor_w.pre_tfs["ToBatch"](imgs=_warm_batch)
+        _ = predictor_w.runner(x=_warm_x)
+        print(f"[ocr] Core {core_id} ready (pre-warmed)")
     except Exception as e:
         print(f"[ocr] Core {core_id} 模型加载失败: {e}", flush=True)
         raise

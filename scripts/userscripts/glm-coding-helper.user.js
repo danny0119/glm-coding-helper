@@ -110,8 +110,22 @@
         }
 
         function fetchImageDataUrl(url) {
-            return new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
+            function doFetch() {
+                return fetch(url, { credentials: 'include' })
+                    .then(r => r.blob())
+                    .then(blob => new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.onerror = () => reject(new Error('FileReader failed'));
+                        reader.readAsDataURL(blob);
+                    }));
+            }
+            function doGM() {
+                return new Promise((resolve, reject) => {
+                    if (typeof GM_xmlhttpRequest === 'undefined') {
+                        reject(new Error('GM_xmlhttpRequest unavailable'));
+                        return;
+                    }
                     GM_xmlhttpRequest({
                         method: 'GET',
                         url,
@@ -124,18 +138,9 @@
                         },
                         onerror: () => reject(new Error('image download failed')),
                     });
-                    return;
-                }
-                fetch(url, { credentials: 'include' })
-                    .then(r => r.blob())
-                    .then(blob => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.onerror = () => reject(new Error('FileReader failed'));
-                        reader.readAsDataURL(blob);
-                    })
-                    .catch(reject);
-            });
+                });
+            }
+            return doFetch().catch(() => doGM());
         }
 
         function postDirect(dataUrl, chars) {
@@ -145,8 +150,19 @@
                 ts: Date.now(),
                 source: 'tencent_iframe_direct',
             });
-            return new Promise((resolve, reject) => {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
+            function doFetch() {
+                return fetch(DIRECT_OCR_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body,
+                }).then(r => r.json());
+            }
+            function doGM() {
+                return new Promise((resolve, reject) => {
+                    if (typeof GM_xmlhttpRequest === 'undefined') {
+                        reject(new Error('GM_xmlhttpRequest unavailable'));
+                        return;
+                    }
                     GM_xmlhttpRequest({
                         method: 'POST',
                         url: DIRECT_OCR_URL,
@@ -158,14 +174,9 @@
                         },
                         onerror: () => reject(new Error('direct OCR request failed')),
                     });
-                    return;
-                }
-                fetch(DIRECT_OCR_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body,
-                }).then(r => r.json()).then(resolve).catch(reject);
-            });
+                });
+            }
+            return doFetch().catch(() => doGM());
         }
 
         function dispatchClick(el, nx, ny, label) {
@@ -1303,29 +1314,33 @@
     let rushState = 'idle';
 
     function serverRequest(method, path, data) {
-        return new Promise((resolve, reject) => {
-            try {
-                if (typeof GM_xmlhttpRequest !== 'undefined') {
-                    GM_xmlhttpRequest({
-                        method: method,
-                        url: 'http://localhost:8888' + path,
-                        headers: { 'Content-Type': 'application/json' },
-                        data: data ? JSON.stringify(data) : undefined,
-                        onload: (r) => {
-                            try { resolve(JSON.parse(r.responseText)); }
-                            catch { resolve({ raw: r.responseText }); }
-                        },
-                        onerror: (e) => reject(new Error('GM_xmlhttpRequest error: ' + e)),
-                    });
-                } else {
-                    fetch('http://localhost:8888' + path, {
-                        method: method,
-                        headers: { 'Content-Type': 'application/json' },
-                        body: data ? JSON.stringify(data) : undefined,
-                    }).then(r => r.json()).then(resolve).catch(reject);
+        function doFetch() {
+            return fetch('http://localhost:8888' + path, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: data ? JSON.stringify(data) : undefined,
+            }).then(r => r.json());
+        }
+        function doGM() {
+            return new Promise((resolve, reject) => {
+                if (typeof GM_xmlhttpRequest === 'undefined') {
+                    reject(new Error('GM_xmlhttpRequest unavailable'));
+                    return;
                 }
-            } catch (e) { reject(e); }
-        });
+                GM_xmlhttpRequest({
+                    method: method,
+                    url: 'http://localhost:8888' + path,
+                    headers: { 'Content-Type': 'application/json' },
+                    data: data ? JSON.stringify(data) : undefined,
+                    onload: (r) => {
+                        try { resolve(JSON.parse(r.responseText)); }
+                        catch { resolve({ raw: r.responseText }); }
+                    },
+                    onerror: (e) => reject(new Error('GM_xmlhttpRequest error: ' + e)),
+                });
+            });
+        }
+        return doFetch().catch(() => doGM());
     }
 
     function pollResult(ts) {
@@ -1827,8 +1842,22 @@
     }
 
     function fetchCaptchaImageDirect(url) {
-        return new Promise(function(resolve, reject) {
-            if (typeof GM_xmlhttpRequest !== 'undefined') {
+        function doFetch() {
+            return fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
+                return new Promise(function(resolve, reject) {
+                    var reader = new FileReader();
+                    reader.onload = function() { resolve(reader.result); };
+                    reader.onerror = function() { reject(new Error('FileReader failed')); };
+                    reader.readAsDataURL(blob);
+                });
+            });
+        }
+        function doGM() {
+            return new Promise(function(resolve, reject) {
+                if (typeof GM_xmlhttpRequest === 'undefined') {
+                    reject(new Error('GM_xmlhttpRequest unavailable'));
+                    return;
+                }
                 GM_xmlhttpRequest({
                     method: 'GET',
                     url: url,
@@ -1841,15 +1870,9 @@
                     },
                     onerror: function() { reject(new Error('image download failed')); }
                 });
-                return;
-            }
-            fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
-                var reader = new FileReader();
-                reader.onload = function() { resolve(reader.result); };
-                reader.onerror = function() { reject(new Error('FileReader failed')); };
-                reader.readAsDataURL(blob);
-            }).catch(reject);
-        });
+            });
+        }
+        return doFetch().catch(function() { return doGM(); });
     }
 
     async function handleCaptchaDirectInPage(chars) {

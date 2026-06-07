@@ -1,11 +1,13 @@
 """
 验证码极速网关 - 双端流水线架构
-- 8 YOLO + 8 OCR 完美填满 16 物理核，彻底消灭串行等待
+- YOLO -> OCR 两段流水线，默认 4 YOLO + 8 OCR worker
+- 可通过 config.json 配置 worker 数和端口
 - 共享内存零拷贝传递切片，消灭序列化开销
 """
 import os
 import sys
 import io
+import json
 import base64
 import time
 import asyncio
@@ -29,8 +31,28 @@ else:
 if str(ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(ROOT))
 
-N_YOLO = 4
-N_OCR = 8
+# ── 加载 config.json（支持可配置 worker 数）─────────────────
+CONFIG_PATH = ROOT / "config.json"
+_DEFAULT = {"workers": 4, "ocr_workers": 8, "port": 8888}
+if CONFIG_PATH.exists():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            _cfg = json.load(f)
+    except Exception:
+        _cfg = {}
+else:
+    _cfg = {}
+N_YOLO = max(1, int(_cfg.get("workers", _DEFAULT["workers"])))
+N_OCR  = max(1, int(_cfg.get("ocr_workers", _DEFAULT["ocr_workers"])))
+PORT   = max(1, int(_cfg.get("port", _DEFAULT["port"])))
+
+if not CONFIG_PATH.exists():
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"workers": N_YOLO, "ocr_workers": N_OCR, "port": PORT}, f, indent=2)
+        print(f"[config] created default {CONFIG_PATH}")
+    except Exception:
+        pass
 
 # 队列：网关 -> YOLO (传原图 bytes，几十KB，Queue 足矣)
 yolo_req_queues = [mp.Queue(maxsize=10) for _ in range(N_YOLO)]
@@ -53,19 +75,19 @@ async def lifespan(app: FastAPI):
     from backend.worker import run_yolo_worker
     from backend.ppocr_worker import run_ocr_worker_direct
 
-    print(f"[architect] 启动 {N_YOLO} YOLO 流水线 (Core 0-7)...")
+    print(f"[architect] 启动 {N_YOLO} YOLO 流水线 (Core 0-{N_YOLO - 1})...")
     for i in range(N_YOLO):
         p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue), daemon=True)
         p.start()
         workers_list.append(p)
         time.sleep(0.5)
 
-    print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core 8-15, 错峰加载)...")
+    print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core {N_YOLO}-{N_YOLO + N_OCR - 1}, 错峰加载)...")
     for i in range(N_OCR):
-        p = mp.Process(target=run_ocr_worker_direct, args=(8 + i, ocr_req_queue, res_queue), daemon=True)
+        p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue), daemon=True)
         p.start()
         workers_list.append(p)
-        time.sleep(3)  # 错峰3秒，避免8个OCR同时加载OOM
+        time.sleep(3)  # 错峰3秒，避免OCR同时加载OOM
 
     threading.Thread(target=result_listener_thread, daemon=True).start()
     yield
@@ -266,7 +288,7 @@ async def handle_batch_direct(data: BatchCaptchaRequest):
 
 def main():
     mp.freeze_support()
-    uvicorn.run("backend.server:app", host="0.0.0.0", port=8888, log_level="info")
+    uvicorn.run("backend.server:app", host="0.0.0.0", port=PORT, log_level="info")
 
 
 if __name__ == "__main__":
