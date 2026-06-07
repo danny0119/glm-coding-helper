@@ -93,20 +93,40 @@ async def lifespan(app: FastAPI):
     from backend.worker import run_yolo_worker
     from backend.ppocr_worker import run_ocr_worker_direct
 
-    print(f"[architect] 启动 {N_YOLO} YOLO 流水线 (Core 0-{N_YOLO - 1})...")
-    for i in range(N_YOLO):
-        p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue), daemon=True)
-        p.start()
-        workers_list.append(p)
-        await asyncio.sleep(0.2)
+    # ── 预热磁盘缓存：主进程先读模型文件，worker 启动时走内存 ──
+    def _warm_disk_cache():
+        model_files = list((ROOT / "models" / "weights").glob("*.pt"))
+        ocr_dir = ROOT / "official_models" / "PP-OCRv5_server_rec_safetensors"
+        if ocr_dir.exists():
+            model_files += list(ocr_dir.glob("*.safetensors"))
+        for f in model_files:
+            try:
+                with open(f, "rb") as fh:
+                    fh.read(1 << 20)  # read 1MB to warm page cache
+            except Exception:
+                pass
 
-    print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core {N_YOLO}-{N_YOLO + N_OCR - 1}, 错峰加载)...")
-    for i in range(N_OCR):
-        p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue), daemon=True)
-        p.start()
-        workers_list.append(p)
-        await asyncio.sleep(0.5)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _warm_disk_cache)
+    print("[architect] disk cache warmed")
 
+    # ── 后台启动 workers，不阻塞服务上线 ──
+    def _start_workers():
+        print(f"[architect] 启动 {N_YOLO} YOLO 流水线 (Core 0-{N_YOLO - 1})...")
+        for i in range(N_YOLO):
+            p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue), daemon=True)
+            p.start()
+            workers_list.append(p)
+            time.sleep(0.1)
+
+        print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core {N_YOLO}-{N_YOLO + N_OCR - 1}, 错峰加载)...")
+        for i in range(N_OCR):
+            p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue), daemon=True)
+            p.start()
+            workers_list.append(p)
+            time.sleep(0.2)
+
+    threading.Thread(target=_start_workers, daemon=True).start()
     threading.Thread(target=result_listener_thread, daemon=True).start()
     yield
     for p in workers_list:
