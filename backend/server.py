@@ -98,14 +98,14 @@ async def lifespan(app: FastAPI):
         p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue), daemon=True)
         p.start()
         workers_list.append(p)
-        time.sleep(0.5)
+        await asyncio.sleep(0.2)
 
     print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core {N_YOLO}-{N_YOLO + N_OCR - 1}, 错峰加载)...")
     for i in range(N_OCR):
         p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue), daemon=True)
         p.start()
         workers_list.append(p)
-        time.sleep(3)  # 错峰3秒，避免OCR同时加载OOM
+        await asyncio.sleep(0.5)
 
     threading.Thread(target=result_listener_thread, daemon=True).start()
     yield
