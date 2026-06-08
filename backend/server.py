@@ -87,6 +87,7 @@ request_counter = 0
 round_robin_idx = 0
 ready_count = 0
 ready_count_lock = threading.Lock()
+_shutdown = threading.Event()
 
 
 @asynccontextmanager
@@ -115,27 +116,63 @@ async def lifespan(app: FastAPI):
     print("[architect] disk cache warmed")
 
     # ── 后台启动 workers，不阻塞服务上线 ──
+    def _start_one(target_fn, target_args):
+        p = mp.Process(target=target_fn, args=target_args, daemon=True)
+        p.start()
+        workers_list.append(p)
+        return p
+
     def _start_workers():
         print(f"[architect] 启动 {N_YOLO} YOLO 流水线 (Core 0-{N_YOLO - 1})...")
         for i in range(N_YOLO):
-            p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue, ready_queue), daemon=True)
-            p.start()
-            workers_list.append(p)
+            _start_one(run_yolo_worker, (i, yolo_req_queues[i], ocr_req_queue, ready_queue))
             time.sleep(0.1)
 
         print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core {N_YOLO}-{N_YOLO + N_OCR - 1}, 错峰加载)...")
         for i in range(N_OCR):
-            p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue, ready_queue), daemon=True)
-            p.start()
-            workers_list.append(p)
-            time.sleep(0.2)
+            core_id = N_YOLO + i
+            p = _start_one(run_ocr_worker_direct, (core_id, ocr_req_queue, res_queue, ready_queue))
+            time.sleep(1.0)  # OCR 模型大，间隔 1s 避免内存尖峰
+
+    def _worker_watchdog():
+        """监控 worker 进程，崩溃后自动重启（仅 OCR，内存不足时重试）"""
+        time.sleep(30)
+        while not _shutdown.is_set():
+            _shutdown.wait(15)
+            if _shutdown.is_set():
+                break
+            with ready_count_lock:
+                if ready_count >= N_YOLO + N_OCR:
+                    continue
+            for idx, p in enumerate(workers_list):
+                if not p.is_alive():
+                    core_id = N_YOLO + (idx - N_YOLO) if idx >= N_YOLO else idx
+                    worker_type = "ocr" if idx >= N_YOLO else "yolo"
+                    print(f"[architect] {worker_type} worker Core {core_id} 崩溃，10s 后重启...")
+                    time.sleep(10)
+                    if worker_type == "ocr":
+                        new_p = mp.Process(target=run_ocr_worker_direct, args=(
+                            core_id, ocr_req_queue, res_queue, ready_queue), daemon=True)
+                    else:
+                        new_p = mp.Process(target=run_yolo_worker, args=(
+                            core_id, yolo_req_queues[idx], ocr_req_queue, ready_queue), daemon=True)
+                    new_p.start()
+                    workers_list[idx] = new_p
+                    break
 
     threading.Thread(target=_start_workers, daemon=True).start()
     threading.Thread(target=result_listener_thread, daemon=True).start()
     threading.Thread(target=ready_count_tracker, daemon=True).start()
-    yield
-    for p in workers_list:
-        p.terminate()
+    threading.Thread(target=_worker_watchdog, daemon=True).start()
+    try:
+        yield
+    finally:
+        _shutdown.set()
+        for p in workers_list:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=3)
+        print("[architect] all workers stopped")
 
 
 def result_listener_thread():
