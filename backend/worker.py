@@ -27,7 +27,7 @@ for _key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUME
 from backend.evaluate import select_fixed3
 
 
-def run_yolo_worker(core_id: int, req_queue, ocr_queue):
+def run_yolo_worker(core_id: int, req_queue, ocr_queue, ready_queue):
     # 绑定物理核
     try:
         p = psutil.Process()
@@ -45,6 +45,7 @@ def run_yolo_worker(core_id: int, req_queue, ocr_queue):
         verbose=False,
     )
     print(f"[yolo] Core {core_id} ready")
+    ready_queue.put("yolo_ready")
 
     while True:
         payload = req_queue.get()

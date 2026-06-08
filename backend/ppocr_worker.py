@@ -112,7 +112,7 @@ def assign_prompt_globally(rows: list[dict], prompt: list[str]) -> list[dict]:
     return assigned
 
 
-def run_ocr_worker_direct(core_id: int, req_queue, res_queue):
+def run_ocr_worker_direct(core_id: int, req_queue, res_queue, ready_queue):
     # 绑定物理核
     try:
         p = psutil.Process()
@@ -132,6 +132,7 @@ def run_ocr_worker_direct(core_id: int, req_queue, res_queue):
         _warm_x = predictor_w.pre_tfs["ToBatch"](imgs=_warm_batch)
         _ = predictor_w.runner(x=_warm_x)
         print(f"[ocr] Core {core_id} ready (pre-warmed)")
+        ready_queue.put("ocr_ready")
     except Exception as e:
         print(f"[ocr] Core {core_id} 模型加载失败: {e}", flush=True)
         raise

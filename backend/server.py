@@ -78,11 +78,15 @@ yolo_req_queues = [mp.Queue(maxsize=10) for _ in range(N_YOLO)]
 ocr_req_queue = mp.Queue()
 # 队列：OCR -> 网关
 res_queue = mp.Queue()
+# 队列：worker 就绪信号 (YOLO/OCR 各自推送 ready 消息)
+ready_queue = mp.Queue()
 
 pending_requests = {}
 request_lock = threading.Lock()
 request_counter = 0
 round_robin_idx = 0
+ready_count = 0
+ready_count_lock = threading.Lock()
 
 
 @asynccontextmanager
@@ -114,20 +118,21 @@ async def lifespan(app: FastAPI):
     def _start_workers():
         print(f"[architect] 启动 {N_YOLO} YOLO 流水线 (Core 0-{N_YOLO - 1})...")
         for i in range(N_YOLO):
-            p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue), daemon=True)
+            p = mp.Process(target=run_yolo_worker, args=(i, yolo_req_queues[i], ocr_req_queue, ready_queue), daemon=True)
             p.start()
             workers_list.append(p)
             time.sleep(0.1)
 
         print(f"[architect] 启动 {N_OCR} OCR 流水线 (Core {N_YOLO}-{N_YOLO + N_OCR - 1}, 错峰加载)...")
         for i in range(N_OCR):
-            p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue), daemon=True)
+            p = mp.Process(target=run_ocr_worker_direct, args=(N_YOLO + i, ocr_req_queue, res_queue, ready_queue), daemon=True)
             p.start()
             workers_list.append(p)
             time.sleep(0.2)
 
     threading.Thread(target=_start_workers, daemon=True).start()
     threading.Thread(target=result_listener_thread, daemon=True).start()
+    threading.Thread(target=ready_count_tracker, daemon=True).start()
     yield
     for p in workers_list:
         p.terminate()
@@ -143,6 +148,15 @@ def result_listener_thread():
             future = pending_requests.pop(req_id, None)
         if future and not future.done():
             future.get_loop().call_soon_threadsafe(future.set_result, res)
+
+
+def ready_count_tracker():
+    global ready_count
+    while True:
+        msg = ready_queue.get()
+        with ready_count_lock:
+            ready_count += 1
+        print(f"[architect] worker ready ({ready_count}/{N_YOLO + N_OCR})")
 
 
 class CaptchaRequest(BaseModel):
@@ -169,7 +183,11 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "workers": N_YOLO + N_OCR}
+    with ready_count_lock:
+        r = ready_count
+    total = N_YOLO + N_OCR
+    status = "ok" if r >= total else "starting"
+    return {"status": status, "workers": total, "ready_workers": r}
 
 
 @app.post("/direct")

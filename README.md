@@ -185,7 +185,7 @@ https://www.bigmodel.cn/glm-coding?ic=9GXWL9KCGZ
 `backend/` 目录提供了一种可选的并发流水线后端，通过多进程流水线提升 CPU 多核利用率：
 
 - **YOLO → OCR 两段流水线**：YOLO worker 检测字符位置、裁切 → OCR worker 识别单个文字
-- **默认 4 YOLO + 8 OCR worker**（可通过 `config.json` 调整）
+- **按 CPU 核数自动分配 YOLO/OCR worker**（可通过 `config.json` 手动调整）
 - 每个 worker 绑定独立物理核心，消除 GIL 争抢
 - 队列传递裁剪结果，零序列化开销
 
