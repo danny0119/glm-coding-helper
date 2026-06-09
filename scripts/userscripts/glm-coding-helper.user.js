@@ -247,6 +247,20 @@
                 solving = false;
             }
         }
+        // ── Ticket 捕获：拦截 cap_union_new_verify 响应 ──
+        var _ticketParse = JSON.parse;
+        JSON.parse = function (t, r) {
+            var o = _ticketParse(t, r);
+            try {
+                if (o && o.ticket && o.randstr) {
+                    window.__glmCaptchaTicket = { ticket: o.ticket, randstr: o.randstr, ts: Date.now() };
+                    try { parent.postMessage({ type: 'glm-ticket', ticket: o.ticket, randstr: o.randstr }, '*'); } catch (e) {}
+                    log('ticket captured: ' + o.ticket.slice(0, 10) + '...');
+                }
+            } catch (e) {}
+            return o;
+        };
+
         log('started on ' + location.hostname);
         const observer = new MutationObserver(() => setTimeout(tick, 80));
         const root = document.body || document.documentElement;
@@ -358,6 +372,19 @@
             if (!body && urlOrReq instanceof Request) {
                 body = await urlOrReq.clone().text();
             }
+            // ── SKU 劫持：点页面任何套餐按钮 → 替换 body 为目标个人套餐 ──
+            console.log('[GLM SKU] interceptor hit, enabled:', CFG.SKU_SWAP_ENABLED, 'product:', CFG.SKU_SWAP_PRODUCT, 'body type:', typeof body, 'body preview:', String(body || '').slice(0, 200));
+            if (CFG.SKU_SWAP_ENABLED && CFG.SKU_SWAP_PRODUCT) {
+                try {
+                    let bodyObj = typeof body === 'string' ? JSON.parse(body) : JSON.parse(JSON.stringify(body || '{}'));
+                    const orig = bodyObj.productId;
+                    bodyObj.productId = CFG.SKU_SWAP_PRODUCT;
+                    if (CFG.SKU_SWAP_CYCLE) bodyObj.cycle = CFG.SKU_SWAP_CYCLE;
+                    body = JSON.stringify(bodyObj);
+                    console.log('[GLM SKU] swapped', orig, '→', CFG.SKU_SWAP_PRODUCT, 'cycle:', CFG.SKU_SWAP_CYCLE);
+                } catch (e) { console.log('[GLM SKU] parse error:', e.message, 'body:', String(body || '').slice(0, 200)); }
+            }
+
             const authHeaders = getAuthHeaders();
             try {
                 const r = await _oF(url, {
@@ -488,6 +515,9 @@
         RUSH_TARGET_HOUR    : 9,
         RUSH_TARGET_MIN     : 59,
         RUSH_TARGET_SEC     : 58,
+        SKU_SWAP_ENABLED    : false,
+        SKU_SWAP_PRODUCT    : 'product-1df3e1',
+        SKU_SWAP_CYCLE      : 'month',
     };
     function loadCfg() { try { const s = GM_getValue(STORAGE_KEY, null); return s ? { ...DEF, ...JSON.parse(s) } : { ...DEF }; } catch { return { ...DEF }; } }
     function saveCfg(c) { GM_setValue(STORAGE_KEY, JSON.stringify(c)); }
@@ -849,6 +879,25 @@
                     <input type="number" id="glm-rs" value="${CFG.RUSH_TARGET_SEC}" min="0" max="59" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
                 </div>
             </div>
+            <div style="border-top:1px dashed #eee;padding-top:12px;margin-top:4px"></div>
+            <label style="display:flex;align-items:center;cursor:pointer">
+                <input type="checkbox" id="glm-se" ${CFG.SKU_SWAP_ENABLED ? 'checked' : ''} style="margin-right:8px">
+                <span style="font-size:14px;color:#555">启用 SKU 劫持（点套餐→替换为目标个人套餐）</span>
+            </label>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding-left:26px">
+                <span style="font-size:13px;color:#888">目标套餐：</span>
+                <select id="glm-sp" style="padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px">
+                    <option value="product-02434c,month" ${CFG.SKU_SWAP_PRODUCT==='product-02434c'?'selected':''}>Lite 月付 ¥46.55</option>
+                    <option value="product-b8ea38,quarter" ${CFG.SKU_SWAP_PRODUCT==='product-b8ea38'?'selected':''}>Lite 季付 ¥125.68</option>
+                    <option value="product-70a804,year" ${CFG.SKU_SWAP_PRODUCT==='product-70a804'?'selected':''}>Lite 年付 ¥446.88</option>
+                    <option value="product-1df3e1,month" ${CFG.SKU_SWAP_PRODUCT==='product-1df3e1'?'selected':''}>Pro 月付 ¥141.55</option>
+                    <option value="product-fef82f,quarter" ${CFG.SKU_SWAP_PRODUCT==='product-fef82f'?'selected':''}>Pro 季付 ¥382.18</option>
+                    <option value="product-5643e6,year" ${CFG.SKU_SWAP_PRODUCT==='product-5643e6'?'selected':''}>Pro 年付 ¥1358.88</option>
+                    <option value="product-2fc421,month" ${CFG.SKU_SWAP_PRODUCT==='product-2fc421'?'selected':''}>Max 月付 ¥445.55</option>
+                    <option value="product-5d3a03,quarter" ${CFG.SKU_SWAP_PRODUCT==='product-5d3a03'?'selected':''}>Max 季付 ¥1202.98</option>
+                    <option value="product-d46f8b,year" ${CFG.SKU_SWAP_PRODUCT==='product-d46f8b'?'selected':''}>Max 年付 ¥4277.28</option>
+                </select>
+            </div>
             <div style="display:flex;justify-content:space-between;gap:10px">
                 <button id="glm-multi" style="padding:8px 16px;border:1px solid #52c41a;background:#f6ffed;color:#52c41a;border-radius:6px;cursor:pointer;font-weight:600">🚀 一键多开</button>
                 <div style="display:flex;gap:10px">
@@ -878,6 +927,9 @@
                 RUSH_TARGET_HOUR: parseInt(panel.querySelector('#glm-rh').value) || 9,
                 RUSH_TARGET_MIN: parseInt(panel.querySelector('#glm-rm').value) || 59,
                 RUSH_TARGET_SEC: parseInt(panel.querySelector('#glm-rs').value) || 58,
+                SKU_SWAP_ENABLED: panel.querySelector('#glm-se').checked,
+                SKU_SWAP_PRODUCT: (panel.querySelector('#glm-sp').value.split(',')[0] || 'product-1df3e1'),
+                SKU_SWAP_CYCLE: (panel.querySelector('#glm-sp').value.split(',')[1] || 'month'),
                 SAFE_DEFAULTS_VERSION,
             });
             ov.remove(); alert('已保存，即将刷新。'); location.reload();
@@ -1139,6 +1191,58 @@
         }
         return true;
     }
+    // ── Captcha Ticket 捕获：接收 iframe 传回的 ticket ──
+    var __glmTicket = null;
+    window.addEventListener('message', function (e) {
+        if (e.data && e.data.type === 'glm-ticket' && e.data.ticket) {
+            __glmTicket = { ticket: e.data.ticket, randstr: e.data.randstr, ts: Date.now() };
+            console.log('[GLM] ticket received from captcha:', __glmTicket.ticket.slice(0, 10) + '...');
+            setBar('🎫 已捕获验证码 ticket，可手动发送 Preview', '#faad14');
+        }
+    });
+
+    function sendManualPreview() {
+        if (!__glmTicket) { alert('没有可用的 captcha ticket。请先触发一次验证码并完成识别。'); return; }
+        if (!CFG.SKU_SWAP_PRODUCT) { alert('请先在配置中设置 SKU 劫持目标套餐。'); return; }
+        const ticket = __glmTicket;
+        const body = JSON.stringify({
+            productId: CFG.SKU_SWAP_PRODUCT,
+            cycle: CFG.SKU_SWAP_CYCLE || 'month',
+            quantity: 1,
+            autoRenew: false,
+            isUpgrade: false,
+            ticket: ticket.ticket,
+            randstr: ticket.randstr
+        });
+        console.log('[GLM] manual preview →', body.slice(0, 200));
+        setBar('📤 正在发送手动 Preview...', '#1677ff');
+        fetch('/api/biz/pay/preview', {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: body,
+            credentials: 'include'
+        }).then(r => r.text()).then(txt => {
+            let d;
+            try { d = JSON.parse(txt); } catch (e) { d = {}; }
+            console.log('[GLM] manual preview response:', d);
+            if (d?.code === 200 && d?.data?.bizId) {
+                setBar('✅ 成功！bizId: ' + d.data.bizId + ' 金额: ¥' + (d.data.payAmount || '?'), '#16a34a');
+                alert('✅ 手动 Preview 成功！\n\nbizId: ' + d.data.bizId + '\n金额: ¥' + (d.data.payAmount || '?') + '\n\n请检查支付弹窗。');
+            } else if (d?.code === 555 || d?.code >= 500) {
+                setBar('❌ 系统繁忙 (code:' + d.code + ')，请重试', '#ff4d4f');
+            } else if (d?.data?.soldOut) {
+                setBar('📦 该套餐已售罄 (soldOut:true)', '#ff4d4f');
+            } else {
+                setBar('❌ 预览失败: ' + JSON.stringify(d).slice(0, 100), '#ff4d4f');
+            }
+        }).catch(e => {
+            console.error('[GLM] manual preview error:', e);
+            setBar('❌ 网络错误: ' + e.message, '#ff4d4f');
+        });
+    }
+
+    GM_registerMenuCommand('🎫 手动发送个人套餐 Preview', sendManualPreview);
+
     if (checkLogin()) {
         setInterval(tick, CFG.CHECK_INTERVAL);
         const _startDOM = () => {
