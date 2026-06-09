@@ -40,7 +40,7 @@ function Test-BackendMainPython {
     $ErrFile = [System.IO.Path]::GetTempFileName()
     try {
         $Proc = Start-Process -FilePath $PythonPath `
-            -ArgumentList @("-c", "import ultralytics, paddleocr, paddlex, cv2, PIL, numpy") `
+            -ArgumentList @("-c", "import ultralytics, PIL, cv2, numpy; from paddleocr import TextRecognition") `
             -NoNewWindow `
             -Wait `
             -PassThru `
@@ -75,7 +75,7 @@ if ((Test-BackendMainPython $env:CNCAPTCHA_CPU_OCR_PYTHON)) {
     $MainPython = $env:CNCAPTCHA_GPU_OCR_PYTHON
 } else {
     Write-Host "[FAIL] Backend environment is missing or broken." -ForegroundColor Red
-    Write-Host "       Required: ultralytics, paddleocr, paddlex, cv2, PIL (pillow), numpy" -ForegroundColor Red
+    Write-Host "       Required: ultralytics, paddleocr, cv2, PIL (pillow), numpy" -ForegroundColor Red
     Write-Host "       Run install-env.cmd or one-click-start.cmd to repair." -ForegroundColor Red
     Read-Host "Press Enter to exit"
     exit 1

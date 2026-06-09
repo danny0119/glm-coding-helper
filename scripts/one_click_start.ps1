@@ -51,7 +51,7 @@ if ($Selected -eq "auto") {
 
 $CpuPython = Join-Path $Root ".venv_paddle\Scripts\python.exe"
 $GpuPython = Join-Path $Root ".venv_paddle_gpu\Scripts\python.exe"
-$ImportCode = "import ultralytics, paddleocr, paddlex, cv2, PIL, numpy"
+$ImportCode = "import ultralytics, PIL, cv2, numpy; from paddleocr import TextRecognition"
 
 $Ready = $false
 $SelectedPython = ""
