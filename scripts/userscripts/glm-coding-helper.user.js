@@ -518,7 +518,6 @@
         SKU_SWAP_ENABLED    : false,
         SKU_SWAP_PRODUCT    : 'product-1df3e1',
         SKU_SWAP_CYCLE      : 'month',
-        SKU_SWAP_PAYTYPE    : '',
     };
     function loadCfg() { try { const s = GM_getValue(STORAGE_KEY, null); return s ? { ...DEF, ...JSON.parse(s) } : { ...DEF }; } catch { return { ...DEF }; } }
     function saveCfg(c) { GM_setValue(STORAGE_KEY, JSON.stringify(c)); }
@@ -898,11 +897,6 @@
                     <option value="product-5d3a03,quarter" ${CFG.SKU_SWAP_PRODUCT==='product-5d3a03'?'selected':''}>Max 季付 ¥1202.98</option>
                     <option value="product-d46f8b,year" ${CFG.SKU_SWAP_PRODUCT==='product-d46f8b'?'selected':''}>Max 年付 ¥4277.28</option>
                 </select>
-                <span style="font-size:13px;color:#888;margin-left:8px">模式：</span>
-                <select id="glm-pt" style="padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px">
-                    <option value="" ${CFG.SKU_SWAP_PAYTYPE===''?'selected':''}>默认 (QR 扫码)</option>
-                    <option value="BALANCE" ${CFG.SKU_SWAP_PAYTYPE==='BALANCE'?'selected':''}>余额直购 (BALANCE)</option>
-                </select>
             </div>
             <div style="display:flex;justify-content:space-between;gap:10px">
                 <button id="glm-multi" style="padding:8px 16px;border:1px solid #52c41a;background:#f6ffed;color:#52c41a;border-radius:6px;cursor:pointer;font-weight:600">🚀 一键多开</button>
@@ -936,7 +930,6 @@
                 SKU_SWAP_ENABLED: panel.querySelector('#glm-se').checked,
                 SKU_SWAP_PRODUCT: (panel.querySelector('#glm-sp').value.split(',')[0] || 'product-1df3e1'),
                 SKU_SWAP_CYCLE: (panel.querySelector('#glm-sp').value.split(',')[1] || 'month'),
-                SKU_SWAP_PAYTYPE: (panel.querySelector('#glm-pt')?.value || ''),
                 SAFE_DEFAULTS_VERSION,
             });
             ov.remove(); alert('已保存，即将刷新。'); location.reload();
@@ -1212,8 +1205,7 @@
         if (!__glmTicket) { alert('没有可用的 captcha ticket。请先触发一次验证码并完成识别。'); return; }
         if (!CFG.SKU_SWAP_PRODUCT) { alert('请先在配置中设置 SKU 劫持目标套餐。'); return; }
         const ticket = __glmTicket;
-        const payType = CFG.SKU_SWAP_PAYTYPE || '';  // empty or 'BALANCE'
-        const bodyObj = {
+        const body = JSON.stringify({
             productId: CFG.SKU_SWAP_PRODUCT,
             cycle: CFG.SKU_SWAP_CYCLE || 'month',
             quantity: 1,
@@ -1221,11 +1213,9 @@
             isUpgrade: false,
             ticket: ticket.ticket,
             randstr: ticket.randstr
-        };
-        if (payType) bodyObj.payType = payType;
-        const body = JSON.stringify(bodyObj);
-        console.log('[GLM] manual preview (payType=' + (payType || 'default') + ') →', body.slice(0, 250));
-        setBar('📤 正在发送手动 Preview (' + (payType || 'QR') + ')...', '#1677ff');
+        });
+        console.log('[GLM] manual preview →', body.slice(0, 200));
+        setBar('📤 正在发送手动 Preview...', '#1677ff');
         fetch('/api/biz/pay/preview', {
             method: 'POST',
             headers: getAuthHeaders(),
