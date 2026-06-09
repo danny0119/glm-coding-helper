@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         智谱 GLM Coding Plan 抢购助手 + 本地 OCR 自动验证码
 // @namespace    http://tampermonkey.net/
-// @version      8.15
+// @version      8.16
 // @description  GLM Coding Rush / 智谱 GLM Coding Plan 抢购助手，一键抢购油猴脚本 / Tampermonkey userscript，配合本地 CPU/GPU OCR 自动识别中文点选验证码并点击，支持多窗口并发、限流重试和支付页安全保护
 // @author       mumumi
 // @include      https://*bigmodel.cn/glm-coding*
@@ -17,7 +17,9 @@
 // @grant        GM_openInTab
 // @grant        GM_xmlhttpRequest
 // @connect      localhost:8888
+// @connect      localhost
 // @connect      127.0.0.1:8888
+// @connect      127.0.0.1
 // @connect      gtimg.com
 // @connect      *.gtimg.com
 // @connect      captcha.qcloud.com
@@ -28,17 +30,14 @@
 // @source       https://greasyfork.org/zh-CN/scripts/572157-glm-coding-plan%E6%8A%A2%E8%B4%AD%E5%8A%A9%E6%89%8B
 // @credit       Based on mumumi's GLM Coding Plan helper; thanks to the original author.
 // ==/UserScript==
- 
 (function () {
     'use strict';
-
     const __glmHost = (() => { try { return location.hostname || ''; } catch { return ''; } })();
     const __inTencentCaptchaFrame = __glmHost.includes('gtimg.com') || __glmHost.includes('captcha.qcloud.com');
     if (__inTencentCaptchaFrame) {
         initTencentCaptchaDirectBridge();
         return;
     }
-
     function initTencentCaptchaDirectBridge() {
         const DIRECT_OCR_URL = 'http://127.0.0.1:8888/captcha_direct';
         const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -52,11 +51,9 @@
                 return { AUTO_CAPTCHA_CLICK: true, AUTO_CAPTCHA_CONFIRM: false };
             }
         })();
-
         function log(msg) {
             console.log('[glm-captcha-direct] ' + msg);
         }
-
         function visible(el) {
             if (!el) return false;
             const style = getComputedStyle(el);
@@ -64,7 +61,6 @@
             const rect = el.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         }
-
         function bgUrlFrom(el) {
             if (!el) return '';
             const text = (el.style && el.style.backgroundImage ? el.style.backgroundImage : '') || getComputedStyle(el).backgroundImage || '';
@@ -73,7 +69,6 @@
             try { return new URL(match[1], location.href).href; }
             catch { return match[1]; }
         }
-
         function findBgElement() {
             const selectors = [
                 '#slideBg',
@@ -88,7 +83,6 @@
             }
             return null;
         }
-
         function findPromptText() {
             const selectors = [
                 '#instructionText',
@@ -108,7 +102,6 @@
             }
             return '';
         }
-
         function fetchImageDataUrl(url) {
             return new Promise((resolve, reject) => {
                 if (typeof GM_xmlhttpRequest !== 'undefined') {
@@ -137,7 +130,6 @@
                     .catch(reject);
             });
         }
-
         function postDirect(dataUrl, chars) {
             const body = JSON.stringify({
                 image: dataUrl,
@@ -167,7 +159,6 @@
                 }).then(r => r.json()).then(resolve).catch(reject);
             });
         }
-
         function dispatchClick(el, nx, ny, label) {
             const rect = el.getBoundingClientRect();
             const win = el.ownerDocument.defaultView || window;
@@ -182,7 +173,6 @@
             el.dispatchEvent(new win.MouseEvent('click', base));
             log('clicked ' + (label || '') + ' @ ' + nx.toFixed(3) + ',' + ny.toFixed(3));
         }
-
         function clickConfirm() {
             const selectors = [
                 '.verify-btn',
@@ -200,12 +190,10 @@
             }
             return false;
         }
-
         function hasError() {
             const note = document.querySelector('#tcaptcha_note, .tencent-captcha-dy__verify-error-text');
             return visible(note);
         }
-
         async function solveOnce() {
             if (!captchaCfg.AUTO_CAPTCHA_CLICK) return;
             const bgEl = findBgElement();
@@ -220,7 +208,6 @@
                 lastBgUrl = '';
                 return;
             }
-
             lastBgUrl = bgUrl;
             log('capture ' + chars + ' from ' + bgUrl.slice(0, 90));
             const dataUrl = await fetchImageDataUrl(bgUrl);
@@ -230,7 +217,6 @@
                 log('direct OCR failed: ' + JSON.stringify(response).slice(0, 200));
                 return;
             }
-
             for (const point of result.click_coords) {
                 const nx = Number(point.nx);
                 const ny = Number(point.ny);
@@ -241,7 +227,6 @@
             await sleep(250);
             if (captchaCfg.AUTO_CAPTCHA_CONFIRM) clickConfirm();
         }
-
         async function tick() {
             if (solving) return;
             solving = true;
@@ -253,7 +238,6 @@
                 solving = false;
             }
         }
-
         log('started on ' + location.hostname);
         const observer = new MutationObserver(() => setTimeout(tick, 80));
         const root = document.body || document.documentElement;
@@ -261,11 +245,9 @@
         setTimeout(tick, 500);
         setInterval(tick, 1200);
     }
- 
     // ── 去重保护：防止篡猴里装了改名导致的两个实例同时运行 ──────────────────
     if (document.documentElement.dataset.glmHelper === '1') { return; }
     document.documentElement.dataset.glmHelper = '1';
- 
     // ── 最早读配置（document-start 时还没有主流程）──────────────────────────
     const EARLY_STORAGE_KEY = 'glm_coding_config_v5';
     const SAFE_DEFAULTS_VERSION = 2;
@@ -276,10 +258,8 @@
         GM_setValue(EARLY_STORAGE_KEY, JSON.stringify(_ec));
     }
     const EARLY_AUTO_CLOSE_INVALID = _ec.AUTO_CLOSE_INVALID === true;
-
     const GLM_DISCOUNT_CODE = ['9G', 'XW', 'L9', 'KC', 'GZ'].join('');
     const GLM_CODING_URL = () => `https://www.bigmodel.cn/glm-coding?ic=${GLM_DISCOUNT_CODE}&closedialog=true`;
-
     function ensureDiscountEntry() {
         try {
             if (!/\/glm-coding(?:\/|$)/.test(location.pathname || '')) return false;
@@ -296,7 +276,6 @@
             return false;
         }
     }
- 
     // ── 限流页立即跳回主页 ────────────────────────────────────────────────────
     if (!location.href.includes('rate-limit.html') && ensureDiscountEntry()) return;
     if (location.href.includes('rate-limit.html') && EARLY_AUTO_CLOSE_INVALID) {
@@ -312,7 +291,6 @@
         });
         return;
     }
- 
     // ── v8.0: 无条件激活售罄按钮 - JSON.parse 劫持 ──────────────────────────
     const _oP = JSON.parse;
     JSON.parse = function (t, r) {
@@ -327,7 +305,6 @@
         })(o); } catch {}
         return o;
     };
- 
     // ── 购买状态（fetch 拦截器 ↔ UI 主循环共享）─────────────────────────────
     const PS = {
         inProgress : false,
@@ -337,10 +314,8 @@
         rawCode    : null,      // v8.9: 记录原始错误码(555/500等)
     };
     let everSucceeded = false;  // v8.9: 一旦拿到过有效 bizId，永不关闭弹窗
- 
     // ── fetch 拦截（/api/biz/pay/preview 和 check）──────────────────────────
     const _oF = window.fetch;
- 
     // v8.0: 从 Cookie 提取 token 和从页面提取组织/项目信息
     function getAuthHeaders() {
         const token = document.cookie.match(/bigmodel_token_production=([^;]+)/)?.[1] || '';
@@ -351,7 +326,6 @@
             'accept-language': 'zh',
             'set-language': 'zh'
         };
- 
         // 尝试从 localStorage 获取组织和项目 ID
         try {
             const orgId = localStorage.getItem('bigmodel_organization') || '';
@@ -359,29 +333,23 @@
             headers['bigmodel-organization'] = orgId;
             headers['bigmodel-project'] = projId;
         } catch {}
- 
         return headers;
     }
- 
     window.fetch = async function (...a) {
         const url = (typeof a[0] === 'string' ? a[0] : a[0]?.url) || '';
- 
         // 拦截 preview：只发一次，不重试（验证码只能用一次）
         if (url.includes('/api/biz/pay/preview')) {
             PS.inProgress = true;
             PS.result     = null;
             PS.bizId      = null;
             PS.payAmount  = null;
- 
             // 提取原始 body
             const [urlOrReq, init = {}] = a;
             let body = init.body;
             if (!body && urlOrReq instanceof Request) {
                 body = await urlOrReq.clone().text();
             }
- 
             const authHeaders = getAuthHeaders();
- 
             try {
                 const r = await _oF(url, {
                     method: 'POST',
@@ -392,10 +360,8 @@
                 const txt = await r.text();
                 let d;
                 try { d = _oP(txt); } catch { d = {}; }
- 
                 console.log('[GLM v8.0 DEBUG] preview响应:', d);
                 console.log('[GLM v8.0 DEBUG] soldOut值:', d?.data?.soldOut, '类型:', typeof d?.data?.soldOut);
- 
                 if (d?.code === 200 && d?.data?.bizId) {
                     PS.result    = 'success';
                     PS.bizId     = d.data.bizId;
@@ -430,7 +396,6 @@
                 throw e;
             }
         }
- 
         // 拦截 check：如果 bizId 为 null，直接返回失败
         if (url.includes('/api/biz/pay/check')) {
             if (url.includes('bizId=null') || !PS.bizId) {
@@ -440,7 +405,6 @@
                 );
             }
         }
- 
         const res = await _oF.apply(this, a);
         const rCt = res.headers.get('content-type') || '';
         if (rCt.includes('json') && (url.includes('/api/') || url.includes('bigmodel'))) {
@@ -459,7 +423,6 @@
         }
         return res;
     };
-
     // XHR 兜底（重定向到上方 fetch 拦截器）
     const _xO = XMLHttpRequest.prototype.open;
     const _xS = XMLHttpRequest.prototype.send;
@@ -485,7 +448,6 @@
         }
         return _xS.apply(this, a);
     };
- 
     // ── 每日套餐状态（localStorage，按日隔离）────────────────────────────────
     // -1未知  0进行中(重启复位)  1今日售罄  2今日已购
     const _today = new Date().toISOString().slice(0, 10);
@@ -496,12 +458,10 @@
     function _flush()       { localStorage.setItem(_dsKey, JSON.stringify(_ds)); }
     function getS(t, p)     { return _ds[`${t}-${p}`] ?? -1; }
     function setS(t, p, v)  { _ds[`${t}-${p}`] = v; _flush(); }
- 
     if (Object.values(_ds).includes(2)) {
         setTimeout(() => setBar('🎉 今日已订阅成功，脚本停止。', '#237804'), 800);
         return;
     }
- 
     // ── 配置 ──────────────────────────────────────────────────────────────────
     const STORAGE_KEY = 'glm_coding_config_v5';
     const TABS_MAP    = { 1: '连续包月', 2: '连续包季', 3: '连续包年' };
@@ -515,16 +475,17 @@
         AUTO_CLICK_SUB    : true,
         AUTO_CAPTCHA_CLICK : true,
         AUTO_CAPTCHA_CONFIRM: false,
+        RUSH_ENABLED        : false,
+        RUSH_TARGET_HOUR    : 9,
+        RUSH_TARGET_MIN     : 59,
+        RUSH_TARGET_SEC     : 58,
     };
- 
     function loadCfg() { try { const s = GM_getValue(STORAGE_KEY, null); return s ? { ...DEF, ...JSON.parse(s) } : { ...DEF }; } catch { return { ...DEF }; } }
     function saveCfg(c) { GM_setValue(STORAGE_KEY, JSON.stringify(c)); }
     const CFG = loadCfg();
- 
     GM_registerMenuCommand('⚙️ 打开配置面板', openConfigPanel);
     GM_registerMenuCommand('🗑️ 清除今日套餐状态缓存', () => { localStorage.removeItem(_dsKey); alert('今日状态已清除，即将刷新。'); location.reload(); });
     GM_registerMenuCommand('🚀 一键多开窗口', openMultipleWindows);
- 
     // ── v8.0: ESC 键快速关闭弹窗 ──────────────────────────────────────────────
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' || e.keyCode === 27) {
@@ -564,7 +525,6 @@
             }
         }
     });
- 
     // ── v8.0: 一键多开窗口函数 ────────────────────────────────────────────────
     function openMultipleWindows() {
         const count = prompt('请输入要打开的窗口数量（建议 2-5 个）:', '3');
@@ -580,21 +540,17 @@
         }
         alert(`✅ 已打开 ${n} 个标签页！\n\n� 多窗口抢购流程：\n1. 每个窗口自动解验证码（不点确定）\n2. 等待到 10:00:00 + 错开时间\n3. 自动点击确认发送请求\n\n💡 窗口0最先点，之后每个错开2秒`);
     }
- 
     // ── 扫描队列（过滤今日已确认售罄）────────────────────────────────────────
     const tabs      = String(CFG.TABS_PRIORITY).split(',').map(Number).filter(Boolean);
     const pkgs      = String(CFG.PACKAGES_PRIORITY).split(',').map(Number).filter(Boolean);
     const allTargets = tabs.flatMap(t => pkgs.map(p => ({ tab: t, pkg: p })));
     const scanQueue = allTargets.filter(({ tab: t, pkg: p }) => getS(t, p) !== 1);
- 
     if (!scanQueue.length) {
         scanQueue.push(...allTargets);
         setTimeout(() => setBar('📭 今日缓存显示全售罄，仍会重新扫描确认。', '#434343'), 800);
     }
- 
     // ── 状态机变量 ────────────────────────────────────────────────────────────
     let state = 'SCANNING';   // SCANNING | TASK_UNIT | SLEEPING | DONE
- 
     // SCANNING / TASK_UNIT
     let qIdx = 0, sweepRestocks = [], lastTabSwitch = 0, sweepBusyCount = 0, emptySweepCount = 0;
     const soldOutHits = Object.create(null);
@@ -602,7 +558,6 @@
     let lastCloseReason = '';
     let sleepUntil = 0;
     const MAX_RL = 3, MODAL_WAIT = 15000, EMPTY_SWEEP_CONFIRM = 3, EMPTY_SWEEP_RETRY_MS = 180000, SOLD_OUT_CONFIRM = 2;
- 
     // ── 工具函数 ──────────────────────────────────────────────────────────────
     function parseRestock(text) {
         const m = (text || '').match(/0?(\d{1,2})月0?(\d{1,2})日\s*(\d{1,2}):0?(\d{1,2})/);
@@ -627,7 +582,6 @@
         return 0;
     }
     function isRealBizId(id) { return id && !id.startsWith('debug-'); }
- 
     // ── v8.0: 黄金时间判断（9:30-10:10）──────────────────────────────────────
     function isGoldenTime() {
         const now = new Date();
@@ -638,14 +592,12 @@
         const end = 10 * 60 + 10;   // 10:10
         return time >= start && time <= end;
     }
- 
     // ── DOM 访问 ──────────────────────────────────────────────────────────────
     const tabEl     = n => document.querySelectorAll('#switchTabBox .switch-tab-item')[n];
     const btnEl     = n => document.querySelector(`.glm-coding-package-list > div:nth-child(${n}) > div > .package-card-btn-box > button`);
     const canBuy    = b => b && !b.disabled && !b.classList.contains('is-disabled') && !b.classList.contains('disabled') && !/售罄|补货|暂时/.test(b.innerText || '');
     const isSoldOut = b => /售罄|补货|暂时/.test(b?.innerText || '');
     const isBusy    = b => /抢购人数过多|请刷新/.test(b?.innerText || '');
- 
     // ── 弹窗检测 ──────────────────────────────────────────────────────────────
     function findRLModal() {
         for (const w of document.querySelectorAll('.el-dialog__wrapper'))
@@ -670,19 +622,16 @@
         const d = getPayDialog();
         if (d) closeModal(d.closest('.el-dialog__wrapper'));
     }
-
     // ── v8.9: 小飞机检测：弹窗里出现系统繁忙的"小飞机"图标 ───────────────────
     function hasAirplaneInDialog() {
         const dlg = document.querySelector('.pay-dialog');
         if (!dlg) return false;
         return !!dlg.querySelector('.empty-data-wrap, .empty-data');
     }
-
     function isAirplanePayDialog(rlWrapper) {
         if (!rlWrapper) return false;
         return !!rlWrapper.querySelector('.pay-dialog .empty-data-wrap, .pay-dialog .empty-data');
     }
- 
     // ── 对话框实付金额读取（双通道）──────────────────────────────────────────
     //   通道A：扫码区 .info-price 最后一个 <span>（纯数字，如"149"）
     //   通道B：计算明细区"实付金额"对应的 .price-item（含￥，如"￥149"）
@@ -691,7 +640,6 @@
     function readDialogPrices() {
         const dlg = getPayDialog();
         if (!dlg) return null;
- 
         // 通道A
         let scanPrice = 0;
         const infoPrice = dlg.querySelector('.info-price');
@@ -703,7 +651,6 @@
                 if (!isNaN(v) && v > 0) { scanPrice = v; break; }
             }
         }
- 
         // 通道B
         let actualPrice = 0;
         dlg.querySelectorAll('.calculate-content-item').forEach(li => {
@@ -712,25 +659,24 @@
                 if (!isNaN(v) && v > 0) actualPrice = v;
             }
         });
- 
         return { scanPrice, actualPrice, any: scanPrice > 0 || actualPrice > 0 };
     }
- 
     // ── v8.9: 弹窗关闭决策（三态返回）────────────────────────────────────────
     // 返回: 'close' → 关弹窗试下一个 | 'keep' → 不关 | 'warn' → 异常，告知用户
     function checkPayDialog() {
         const dlg = getPayDialog();
         if (!dlg) return 'keep';
-
-        // 绝对安全锁：本次会话中只要成功过一次，永不关闭
-        if (everSucceeded) return 'keep';
-
+        // 抢购模式锁定：抢购确认后永不自动关闭支付弹窗，留给用户手动处理
+        if (window.__glmRushConfirmed) {
+            window.__glmRushDialogSeen = 1;
+            return 'keep';
+        }
+        // 绝对安全锁：本次会话中只要成功过一次且当前 bizId 有效，永不关闭
+        if (everSucceeded && PS.bizId) return 'keep';
         // 接口还没返回
         if (PS.inProgress) return 'keep';
-
         // ── 情况 A：接口 555 系统繁忙 → 关弹窗试下一个
         if (PS.result === 'busy') return 'close';
-
         // ── 情况 B：接口返回 200+soldOut → 关弹窗试下一个（但前端可能因 JSON.parse 劫持而正常显示了价格）
         if (PS.result === 'sold_out') {
             if (Date.now() - taskClickTime >= 1500) {
@@ -742,14 +688,11 @@
             }
             return 'close';
         }
-
         // ── 情况 D：接口没说售罄/繁忙，但弹窗里出现小飞机 → 异常不一致
         if (hasAirplaneInDialog()) return 'warn';
-
         // ── 情况 C：接口成功 + 有价格 → 不关
         return 'keep';
     }
- 
     // ── 底部状态栏 ────────────────────────────────────────────────────────────
     var _bar = null;
     function setBar(html, bg = '#1677ff') {
@@ -766,7 +709,6 @@
         _bar.style.background = bg;
         _bar.firstElementChild.innerHTML = `🤖 <b>抢购助手</b> &nbsp;|&nbsp; ${html}`;
     }
- 
     // ── 支付报警：视口边框红色闪烁 ────────────────────────────────────────────
     let _alarm = null;
     function showPayAlarm() {
@@ -784,7 +726,6 @@
         _alarm.appendChild(lbl);
         document.body.appendChild(_alarm);
     }
- 
     // ── 推广弹窗 ──────────────────────────────────────────────────────────────
     function triggerPromo() {
         const ov = document.createElement('div');
@@ -807,7 +748,6 @@
         ov.querySelector('#promo-x').onclick = () => ov.remove();
         ov.onclick = e => { if (e.target === ov) ov.remove(); };
     }
- 
     // ── 配置面板 ──────────────────────────────────────────────────────────────
     function buildTransferBox(ct, dataMap, selectedStr, title) {
         const sel   = selectedStr.split(',').filter(Boolean);
@@ -846,7 +786,6 @@
         ct.querySelector('.tf-dn').onclick = () => { const a = R.querySelector('.active'); if (a?.nextElementSibling) R.insertBefore(a.nextElementSibling, a); };
         return () => [...R.querySelectorAll('.tf-item')].map(i => i.dataset.val).join(',');
     }
- 
     function openConfigPanel() {
         document.getElementById('glm-cfg-ov')?.remove();
         if (!document.getElementById('glm-tf-s')) {
@@ -888,6 +827,19 @@
                     <span title="默认关闭。开启后点完验证码文字会自动点确定；关闭后需要你手动点确定。" style="margin-left:6px;cursor:help;color:#999;font-size:14px;border:1px solid #ccc;border-radius:50%;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;line-height:1">?</span>
                 </label>
             </div>
+            <div style="border-top:1px dashed #eee;padding-top:12px;margin-top:4px"></div>
+            <label style="display:flex;align-items:center;cursor:pointer">
+                <input type="checkbox" id="glm-re" ${CFG.RUSH_ENABLED ? 'checked' : ''} style="margin-right:8px">
+                <span style="font-size:14px;color:#555">启用抢购模式（验证码卡点确认）</span>
+            </label>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding-left:26px">
+                <span style="font-size:13px;color:#888">目标时间：</span>
+                <input type="number" id="glm-rh" value="${CFG.RUSH_TARGET_HOUR}" min="0" max="23" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
+                <span style="font-size:14px;color:#888">:</span>
+                <input type="number" id="glm-rm" value="${CFG.RUSH_TARGET_MIN}" min="0" max="59" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
+                <span style="font-size:14px;color:#888">:</span>
+                <input type="number" id="glm-rs" value="${CFG.RUSH_TARGET_SEC}" min="0" max="59" style="width:52px;padding:3px 6px;border:1px solid #d9d9d9;border-radius:4px;font-size:13px;text-align:center">
+            </div>
             <div style="display:flex;justify-content:space-between;gap:10px">
                 <button id="glm-multi" style="padding:8px 16px;border:1px solid #52c41a;background:#f6ffed;color:#52c41a;border-radius:6px;cursor:pointer;font-weight:600">🚀 一键多开</button>
                 <div style="display:flex;gap:10px">
@@ -913,20 +865,28 @@
                 AUTO_CLICK_SUB    : panel.querySelector('#glm-acs').checked,
                 AUTO_CAPTCHA_CLICK: panel.querySelector('#glm-acc').checked,
                 AUTO_CAPTCHA_CONFIRM: panel.querySelector('#glm-acf').checked,
+                RUSH_ENABLED: panel.querySelector('#glm-re').checked,
+                RUSH_TARGET_HOUR: parseInt(panel.querySelector('#glm-rh').value) || 9,
+                RUSH_TARGET_MIN: parseInt(panel.querySelector('#glm-rm').value) || 59,
+                RUSH_TARGET_SEC: parseInt(panel.querySelector('#glm-rs').value) || 58,
                 SAFE_DEFAULTS_VERSION,
             });
             ov.remove(); alert('已保存，即将刷新。'); location.reload();
         };
         ov.onclick = e => { if (e.target === ov) ov.remove(); };
     }
- 
     // ═══════════════════════════════════════════════════════════════════════════
     //  主循环
     // ═══════════════════════════════════════════════════════════════════════════
     function tick() {
         if (state === 'DONE') return;
+        // 抢购确认后：支付弹窗曾经出现过且现在已消失 → 清除锁定，恢复正常流程
+        if (window.__glmRushConfirmed && window.__glmRushDialogSeen && !getPayDialog()) {
+            window.__glmRushConfirmed = 0;
+            window.__glmRushDialogSeen = 0;
+            console.log('[GLM] rush payment dialog closed by user, resuming normal flow');
+        }
         if (ensureDiscountEntry()) return;
- 
         if (state === 'SLEEPING') {
             const rem = sleepUntil - Date.now();
             if (rem <= 0) {
@@ -945,7 +905,6 @@
         if (state === 'TASK_UNIT') { doTaskUnit(); return; }
         doScan();
     }
- 
     // ═══════════════════════════════════════════════════════════════════════════
     //  SCANNING / TASK_UNIT 逻辑
     // ═══════════════════════════════════════════════════════════════════════════
@@ -959,7 +918,6 @@
             lastTabSwitch = Date.now(); setBar(`🔄 切换到 ${TABS_MAP[tab]}...`); return;
         }
         if (Date.now() - lastTabSwitch < 400) return;
- 
         const b = btnEl(pkg);
         if (canBuy(b)) {
             taskTarget = { tab, pkg }; taskPhase = 'IDLE'; taskRLCount = 0;
@@ -968,20 +926,16 @@
             setBar(`🎯 发现可购！${TABS_MAP[tab]} · ${PKGS_MAP[pkg]}，即将点击...`, '#389e0d');
             return;
         }
-
         if (isBusy(b)) {
             sweepBusyCount++;
             setBar(`⚡ 系统繁忙 ${TABS_MAP[tab]} · ${PKGS_MAP[pkg]}，跳过...`);
             qIdx++; return;
         }
-
         const ri = parseRestock(b?.innerText);
         if (ri?.dateStr === todayStr() && ri.msUntil > 0) sweepRestocks.push(ri);
- 
         setBar(`🔍 扫描 ${TABS_MAP[tab]} · ${PKGS_MAP[pkg]} (${qIdx + 1}/${scanQueue.length})`);
         qIdx++;
     }
- 
     function onSweepDone() {
         if (sweepBusyCount >= scanQueue.length) {
             setBar('⚡ 所有套餐系统繁忙(batch-preview 555)，刷新页面重试...', '#d46b08');
@@ -1008,13 +962,11 @@
         sweepRestocks.sort((a, b) => a.msUntil - b.msUntil);
         const nearest = sweepRestocks[0];
         const sleep   = calcSleepMs(nearest.msUntil);
- 
         // ── v8.0: 黄金时间（9:30-10:10）禁止刷新页面 ──────────────────────────
         if (isGoldenTime()) {
             setBar(`🔥 黄金时间！补货倒计时 <b>${fmt(nearest.msUntil)}</b>，禁止刷新，高频监控！`, '#ff4d4f');
             qIdx = 0; sweepRestocks = []; sweepBusyCount = 0; return;
         }
- 
         if (sleep === 0) {
             setBar(`⚡ 补货倒计时 <b>${fmt(nearest.msUntil)}</b>，高频监控！`, '#d4380d');
             qIdx = 0; sweepRestocks = []; sweepBusyCount = 0; return;
@@ -1024,14 +976,12 @@
             setBar(`💤 补货还需 <b>${fmt(nearest.msUntil)}</b>，<b>${fmt(sleep)}</b> 后刷新`, '#434343');
         } else { qIdx = 0; sweepRestocks = []; }
     }
- 
     function doTaskUnit() {
         const { tab, pkg } = taskTarget;
         const te = tabEl(tab);
         if (!te) return;
         if (!te.classList.contains('active')) { te.click(); return; }
         const b = btnEl(pkg);
- 
         if (taskPhase === 'IDLE') {
             if (isSoldOut(b)) { exitTask(); return; }
             if (!canBuy(b)) {
@@ -1048,7 +998,6 @@
             setBar(`🔄 已点击，接口重试中... ${TABS_MAP[tab]} · ${PKGS_MAP[pkg]}（限流 ${taskRLCount}/${MAX_RL}）`, '#d46b08');
             return;
         }
- 
         if (taskPhase === 'WAITING') {
             const rlw = findRLModal();
             if (rlw) {
@@ -1076,7 +1025,6 @@
                     setBar(`${reason}，${isLoop ? '🔄 轮询一圈，从头重试...' : '试下一个...'}`, '#d46b08');
                     return;
                 }
-
                 if (!CFG.AUTO_CLOSE_INVALID) {
                     setBar('⚠️ 限流弹窗（"购买人数较多"），请手动关闭后重试', '#d46b08');
                     return;
@@ -1095,10 +1043,8 @@
                 setBar(`⚠️ 限流 ${taskRLCount}/${MAX_RL}，自动关闭后重试...`, '#d46b08');
                 taskPhase = 'IDLE'; return;
             }
-
             if (isPayDialog()) {
                 const verdict = checkPayDialog();
-
                 if (verdict === 'close') {
                     if (!CFG.AUTO_CLOSE_INVALID) {
                         state = 'DONE';
@@ -1118,32 +1064,27 @@
                     setBar(`${reason}，${isLoop ? '🔄 轮询一圈，从头重试...' : '试下一个...'} `, '#d46b08');
                     return;
                 }
-
                 if (verdict === 'warn') {
                     setBar('⚠️ 弹窗显示小飞机但API未返回繁忙/售罄，前后端不一致。不自动关闭，请手动确认。如果有二维码请扫码支付！', '#ff4d4f');
                     return;
                 }
-
                 const prices = readDialogPrices();
-                if (everSucceeded || prices?.any) {
+                if (everSucceeded && PS.bizId || prices?.any) {
                     state = 'DONE';
-                    if (everSucceeded) showPayAlarm();
+                    if (everSucceeded && PS.bizId) showPayAlarm();
                     setBar('💳 <b>支付弹窗已出现！请立即扫码支付！</b> 脚本已停止。', '#16a34a');
                 } else {
                     setBar(`🔄 ${TABS_MAP[tab]}·${PKGS_MAP[pkg]} 弹窗等待确认...`, '#1677ff');
                 }
                 return;
             }
-
             if (isSuccessDialog()) {
                 setS(tab, pkg, 2); state = 'DONE';
                 setBar('🎉 订阅成功！恭喜！', '#237804'); return;
             }
-
             if (!PS.inProgress && PS.result === 'sold_out' && Date.now() - taskClickTime > 2000) {
                 exitTask(); return;
             }
-
             const elapsed = Date.now() - taskClickTime;
             const prefix = lastCloseReason ? `${lastCloseReason} → ` : '';
             if (PS.inProgress) {
@@ -1151,13 +1092,11 @@
             } else {
                 setBar(`${prefix}🔐 ${TABS_MAP[tab]}·${PKGS_MAP[pkg]} 等待验证码... (${(elapsed/1000).toFixed(1)}s)`, '#1677ff');
             }
-
             if (elapsed > MODAL_WAIT) {
                 if (isSoldOut(b)) exitTask(); else taskPhase = 'IDLE';
             }
         }
     }
- 
     function exitTask() {
         // v8.0: 黄金时间内不标记售罄，持续重试
         if (!isGoldenTime()) {
@@ -1169,7 +1108,6 @@
         qIdx++; taskTarget = null; taskPhase = 'IDLE'; taskRLCount = 0;
         state = 'SCANNING';
     }
- 
     // ── v8.4: DOM 级按钮强制启用（安全网）─────────────────────────────────────
     function forceEnableButtons() {
         document.querySelectorAll('.buy-btn[disabled], .buy-btn.is-disabled, .buy-btn.disabled').forEach(b => {
@@ -1177,7 +1115,6 @@
             b.classList.remove('is-disabled', 'disabled');
         });
     }
-
     // ── 启动 ──────────────────────────────────────────────────────────────────
     // v8.0: 未登录检测
     function checkLogin() {
@@ -1193,7 +1130,6 @@
         }
         return true;
     }
- 
     if (checkLogin()) {
         setInterval(tick, CFG.CHECK_INTERVAL);
         const _startDOM = () => {
@@ -1206,25 +1142,33 @@
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _startDOM);
         else _startDOM();
     }
- 
 })();
-
 // ---- captcha prompt bridge v2: multi-window rush mode ----
 (function () {
     'use strict';
-
     if (window.__glmCaptchaPromptBridge === 1) return;
     window.__glmCaptchaPromptBridge = 1;
-
-    const RUSH_CONFIG = {
-        enabled: true,
-        targetHour: 10,
-        targetMin: 0,
-        targetSec: 0,
-        staggerMs: 2000,
-        pollInterval: 50,
-        pollTimeout: 20000,
-    };
+    const RUSH_CFG = (() => {
+        try {
+            const raw = GM_getValue('glm_coding_config_v5', '{}');
+            const cfg = JSON.parse(raw || '{}');
+            return {
+                enabled: cfg.RUSH_ENABLED === true,
+                targetHour: parseInt(cfg.RUSH_TARGET_HOUR) || 9,
+                targetMin: parseInt(cfg.RUSH_TARGET_MIN) || 59,
+                targetSec: parseInt(cfg.RUSH_TARGET_SEC) || 58,
+                staggerMs: 2000,
+                pollInterval: 50,
+                pollTimeout: 20000,
+            };
+        } catch {
+            return {
+                enabled: false,
+                targetHour: 9, targetMin: 59, targetSec: 58,
+                staggerMs: 2000, pollInterval: 50, pollTimeout: 20000,
+            };
+        }
+    })();
     const CAPTCHA_CFG = (() => {
         try {
             const raw = GM_getValue('glm_coding_config_v5', '{}');
@@ -1233,24 +1177,20 @@
             return { AUTO_CAPTCHA_CLICK: true, AUTO_CAPTCHA_CONFIRM: false };
         }
     })();
-
     function getWindowIndex() {
         const params = new URLSearchParams(location.search);
         return parseInt(params.get('wi') || '0', 10);
     }
-
     function getTargetTimestamp() {
         const now = new Date();
         const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
-            RUSH_CONFIG.targetHour, RUSH_CONFIG.targetMin, RUSH_CONFIG.targetSec, 0);
-        const offset = getWindowIndex() * RUSH_CONFIG.staggerMs;
+            RUSH_CFG.targetHour, RUSH_CFG.targetMin, RUSH_CFG.targetSec, 0);
+        const offset = getWindowIndex() * RUSH_CFG.staggerMs;
         return target.getTime() + offset;
     }
-
     let lastCaptchaText = '';
     let captchaSent = false;
     let rushState = 'idle';
-
     function serverRequest(method, path, data) {
         return new Promise((resolve, reject) => {
             try {
@@ -1276,24 +1216,22 @@
             } catch (e) { reject(e); }
         });
     }
-
     function pollResult(ts) {
         return new Promise((resolve, reject) => {
             const start = Date.now();
             function poll() {
-                if (Date.now() - start > RUSH_CONFIG.pollTimeout) {
+                if (Date.now() - start > RUSH_CFG.pollTimeout) {
                     reject(new Error('poll timeout'));
                     return;
                 }
                 serverRequest('POST', '/result', { ts: ts }).then(d => {
                     if (d.has_result) resolve(d.result);
-                    else setTimeout(poll, RUSH_CONFIG.pollInterval);
-                }).catch(() => setTimeout(poll, RUSH_CONFIG.pollInterval));
+                    else setTimeout(poll, RUSH_CFG.pollInterval);
+                }).catch(() => setTimeout(poll, RUSH_CFG.pollInterval));
             }
             poll();
         });
     }
-
     function waitForTargetTime() {
         return new Promise(resolve => {
             const targetTs = getTargetTimestamp();
@@ -1308,7 +1246,6 @@
             setTimeout(check, Math.max(0, remaining - 5000));
         });
     }
-
     function findAndClickConfirm() {
         var selectors = [
             '.tencent-captcha-dy__btn-confirm',
@@ -1334,27 +1271,21 @@
         }
         return false;
     }
-
     function rushStatus(html, bg) {
         try { setBar(html, bg); } catch (e) {}
     }
-
     async function handleCaptchaRush(chars) {
         var winIdx = getWindowIndex();
         var payloadText = chars.join('');
         rushState = 'solving';
         rushStatus('\uD83D\uDD10 [#' + winIdx + '] \u9A8C\u8BC1\u7801\u8BC6\u522B\u4E2D: ' + payloadText + '...', '#1890ff');
-
         try {
             var sendRes = await serverRequest('POST', '/captcha', { text: payloadText, ts: Date.now() });
             var ts = sendRes.ts;
             if (!ts) throw new Error('no ts');
             console.log('[captcha-rush] [#' + winIdx + '] sent ts=' + ts);
-
             rushStatus('\u23F3 [#' + winIdx + '] \u7B49\u5F85\u8BC6\u522B...', '#faad14');
-
             var result = await pollResult(ts);
-
             if (!result || !result.result || !result.result.success) {
                 rushState = 'idle';
                 captchaSent = false;
@@ -1362,13 +1293,10 @@
                 rushStatus('\u274C [#' + winIdx + '] \u8BC6\u522B\u5931\u8D25: ' + (result && result.result ? result.result.error : '?') + ' \u2192 \u5FEB\u901F\u91CD\u8BD5', '#ff4d4f');
                 return;
             }
-
             var predText = result.result.pred_text;
             var conf = result.result.confidence;
             console.log('[captcha-rush] [#' + winIdx + '] done: ' + predText + ' conf=' + conf);
-
             rushStatus('\u2705 [#' + winIdx + '] \u9A8C\u8BC1\u7801\u5DF2\u89E3: ' + predText + ' (' + (conf * 100).toFixed(0) + '%)', '#52c41a');
-
             var coords = result.result.click_coords || [];
             console.log('[captcha-rush] [#' + winIdx + '] click_coords count=' + coords.length + ' result=' + JSON.stringify(result.result).substring(0, 200));
             if (coords.length > 0) {
@@ -1396,10 +1324,8 @@
                     console.warn('[captcha-rush] [#' + winIdx + '] no click target found');
                 }
             }
-
             await new Promise(function(r) { setTimeout(r, 500); });
             rushState = 'idle';
-
             (async function() {
                 var isRushMode = isGoldenTime();
                 if (isRushMode) {
@@ -1419,7 +1345,6 @@
                     rushStatus('\u26A0\uFE0F [#' + winIdx + '] \u672A\u627E\u5230\u786E\u8BA4\u6309\u94AE!', '#faad14');
                 }
             })();
-
         } catch (e) {
             rushState = 'idle';
             captchaSent = false;
@@ -1428,7 +1353,6 @@
             rushStatus('\u274C [#' + getWindowIndex() + '] \u5F02\u5E38: ' + e.message + ' \u2192 \u5FEB\u901F\u91CD\u8BD5', '#ff4d4f');
         }
     }
-
     function visible(el) {
         if (!el) return false;
         var style = getComputedStyle(el);
@@ -1436,7 +1360,6 @@
         var rect = el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
     }
-
     function getCaptchaPromptText(el) {
         if (!el) return '';
         var raw = (
@@ -1447,7 +1370,6 @@
         ).trim();
         return raw.replace(/^\u8BF7\u4F9D\u6B21\u70B9\u51FB[:\uff1a]?\s*/, '').trim();
     }
-
     function isPointClickPrompt(text) {
         if (!text) return false;
         if (/(\u62D6\u52A8|\u62FC\u56FE|\u6ED1\u5757)/.test(text)) return false;
@@ -1455,12 +1377,10 @@
         var chars = (text.match(/[\u4e00-\u9fff]/g) || []);
         return chars.length >= 3 && chars.length <= 8;
     }
-
     function extractCaptchaChars(text) {
         var chars = (text || '').match(/[\u4e00-\u9fff]/g) || [];
         return chars.slice(-3);
     }
-
     function findCaptchaContainer() {
         var MIN_AREA = 20000;
         var candidates = [];
@@ -1490,7 +1410,6 @@
                 }
             }
         }
-
         if (candidates.length === 0) {
             var allImgs = document.querySelectorAll('img');
             for (var j = 0; j < allImgs.length; j++) {
@@ -1506,7 +1425,6 @@
                 }
             }
         }
-
         if (candidates.length === 0) {
             var wrapSelectors = [
                 '.tencent-captcha-dy__wrap',
@@ -1527,13 +1445,11 @@
             }
             return null;
         }
-
         candidates.sort(function(a, b) { return b.area - a.area; });
         var best = candidates[0];
         console.log('[captcha] selected container: ' + best.w + 'x' + best.h + ' area=' + Math.round(best.area));
         console.log('[captcha] tag=' + best.el.tagName + ' class=' + (best.el.className || '').substring(0, 80));
         console.log('[captcha] bg=' + window.getComputedStyle(best.el).backgroundImage.substring(0, 100));
-
         var _dbgAll = best.el.querySelectorAll('*');
         for (var di = 0; di < Math.min(_dbgAll.length, 20); di++) {
             var de = _dbgAll[di];
@@ -1546,10 +1462,8 @@
             if (de.tagName === 'CANVAS') dbgSrc = ' canvas=' + de.width + 'x' + de.height;
             console.log('[captcha-dbg] ' + de.tagName + '.' + (de.className||'').substring(0,30) + ' ' + Math.round(dr.width) + 'x' + Math.round(dr.height) + dbgSrc + ' bg=' + dbgBg);
         }
-
         return best.el;
     }
-
     function captureElementAsBase64(el) {
         try {
             if (el.tagName === 'CANVAS') {
@@ -1563,7 +1477,6 @@
                 ctx.drawImage(el, 0, 0);
                 return c.toDataURL('image/png');
             }
-
             var allImgChildren = el.querySelectorAll('img');
             for (var mi = 0; mi < allImgChildren.length; mi++) {
                 var mimg = allImgChildren[mi];
@@ -1580,13 +1493,11 @@
                     return ic.toDataURL('image/png');
                 }
             }
-
             var canvasChild = el.querySelector('canvas');
             if (canvasChild && visible(canvasChild)) {
                 console.log('[captcha] using child canvas for capture');
                 return canvasChild.toDataURL('image/png');
             }
-
             var bgUrl = null;
             var computedBg = window.getComputedStyle(el).backgroundImage;
             if (computedBg && computedBg !== 'none' && computedBg.indexOf('url(') !== -1) {
@@ -1605,7 +1516,6 @@
                     _walkEl = _walkEl.parentElement;
                 }
             }
-
             if (bgUrl) {
                 return new Promise(function(resolve) {
                     var bgImg = new Image();
@@ -1623,19 +1533,15 @@
                     bgImg.src = bgUrl;
                 });
             }
-
             var rect = el.getBoundingClientRect();
             var w = Math.floor(rect.width * window.devicePixelRatio);
             var h = Math.floor(rect.height * window.devicePixelRatio);
-
             var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             svg.setAttribute('width', w);
             svg.setAttribute('height', h);
-
             var fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
             fo.setAttribute('width', w);
             fo.setAttribute('height', h);
-
             var clone = el.cloneNode(true);
             var allStyles = window.getComputedStyle(el);
             var styleStr = '';
@@ -1644,17 +1550,13 @@
                 styleStr += prop + ':' + allStyles.getPropertyValue(prop) + ';';
             }
             clone.setAttribute('style', styleStr);
-
             fo.appendChild(clone);
             svg.appendChild(fo);
-
             var svgData = new XMLSerializer().serializeToString(svg);
             var svgBase64 = btoa(unescape(encodeURIComponent(svgData)));
             var dataUrl = 'data:image/svg+xml;base64,' + svgBase64;
-
             var imgForDraw = new Image();
             imgForDraw.src = dataUrl;
-
             return new Promise(function(resolve) {
                 imgForDraw.onload = function() {
                     var fc = document.createElement('canvas');
@@ -1666,33 +1568,27 @@
                 };
                 imgForDraw.onerror = function() { resolve(null); };
             });
-
         } catch(e) {
             console.error('[captcha] capture error:', e);
             return null;
         }
     }
-
     function dispatchClickAt(el, relX, relY, label) {
         var rect = el.getBoundingClientRect();
         var clientX = rect.left + relX;
         var clientY = rect.top + relY;
-
         var evtWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
         var opts = { bubbles: true, cancelable: true, view: evtWin, clientX: clientX, clientY: clientY,
             screenX: clientX + evtWin.screenX, screenY: clientY + evtWin.screenY,
             button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true };
-
         el.dispatchEvent(new PointerEvent('pointerdown', opts));
         el.dispatchEvent(new MouseEvent('mousedown', opts));
         el.dispatchEvent(new PointerEvent('pointerup', opts));
         el.dispatchEvent(new MouseEvent('mouseup', opts));
         el.dispatchEvent(new MouseEvent('click', opts));
         console.log('[captcha] clicked @ (' + Math.round(clientX) + ',' + Math.round(clientY) + ')');
-
         showClickMarker(clientX, clientY, label || '');
     }
-
     var _clickMarkers = [];
     function clearClickMarkers() {
         for (var mi = 0; mi < _clickMarkers.length; mi++) {
@@ -1702,7 +1598,6 @@
         }
         _clickMarkers = [];
     }
-
     function showClickMarker(x, y, label) {
         try {
             var hostDoc = document;
@@ -1718,7 +1613,6 @@
             marker.textContent = label || '';
             hostDoc.body.appendChild(marker);
             _clickMarkers.push(marker);
-
             setTimeout(function() {
                 if (marker.parentNode) marker.parentNode.removeChild(marker);
                 var idx = _clickMarkers.indexOf(marker);
@@ -1728,7 +1622,6 @@
             console.error('[captcha] marker error:', e);
         }
     }
-
     function findCaptchaPromptElement() {
         var selectors = [
             '.tencent-captcha-dy__header-text',
@@ -1748,7 +1641,6 @@
         }
         return null;
     }
-
     function captchaBgUrlFrom(el) {
         if (!el) return '';
         var bg = '';
@@ -1757,7 +1649,6 @@
         if (!match) return '';
         try { return new URL(match[1], location.href).href; } catch(e) { return match[1]; }
     }
-
     function findCaptchaBgElementDirect() {
         var selectors = [
             '#slideBg',
@@ -1776,7 +1667,6 @@
         }
         return null;
     }
-
     function fetchCaptchaImageDirect(url) {
         return new Promise(function(resolve, reject) {
             if (typeof GM_xmlhttpRequest !== 'undefined') {
@@ -1802,7 +1692,6 @@
             }).catch(reject);
         });
     }
-
     async function handleCaptchaDirectInPage(chars) {
         if (!CAPTCHA_CFG.AUTO_CAPTCHA_CLICK) {
             console.log('[captcha-direct-page] auto captcha click disabled');
@@ -1842,7 +1731,23 @@
                 await new Promise(function(r) { setTimeout(r, 220); });
             }
             await new Promise(function(r) { setTimeout(r, 350); });
-            if (CAPTCHA_CFG.AUTO_CAPTCHA_CONFIRM) {
+            rushState = 'idle';
+            if (RUSH_CFG.enabled) {
+                var targetTs = getTargetTimestamp();
+                if (Date.now() < targetTs) {
+                    var wi = getWindowIndex();
+                    console.log('[captcha-rush] rush active, waiting ' + ((targetTs - Date.now())/1000).toFixed(1) + 's until target...');
+                    await waitForTargetTime();
+                    console.log('[captcha-rush] target time reached, confirming...');
+                    var clicked = findAndClickConfirm();
+                    console.log('[captcha-rush] confirm ' + (clicked ? 'success' : 'no button found'));
+                    if (clicked) {
+                        window.__glmRushConfirmed = Date.now();
+                    }
+                } else {
+                    findAndClickConfirm();
+                }
+            } else if (CAPTCHA_CFG.AUTO_CAPTCHA_CONFIRM) {
                 findAndClickConfirm();
             } else {
                 console.log('[captcha-direct-page] captcha confirm is disabled; waiting for manual confirm');
@@ -1855,16 +1760,12 @@
             rushState = 'idle';
         }
     }
-
     async function checkCaptchaPrompt() {
         if (rushState === 'solving') return;
-
         var found = findCaptchaPromptElement();
         if (!found) { captchaSent = false; return; }
-
         var payloadText = found.chars.join('');
         if (!payloadText) { captchaSent = false; return; }
-
         if (payloadText !== lastCaptchaText) {
             lastCaptchaText = payloadText;
             captchaSent = false;
@@ -1872,13 +1773,12 @@
             console.log('[captcha] raw:', found.text);
             console.log('[captcha] prompt:', payloadText);
         }
-
         if (!captchaSent) {
             captchaSent = true;
             console.log('[captcha] page direct solver:', payloadText);
             handleCaptchaDirectInPage(found.chars).catch(function(e) { console.error('[captcha-direct-page] unhandled:', e); });
             return;
-            if (RUSH_CONFIG.enabled) {
+            if (RUSH_CFG.enabled) {
                 handleCaptchaRush(found.chars).catch(function(e) { console.error('[captcha-rush] unhandled:', e); });
             } else {
                 serverRequest('POST', '/captcha', { text: payloadText, ts: Date.now() })
@@ -1887,9 +1787,6 @@
             }
         }
     }
-
     setInterval(checkCaptchaPrompt, 50);
-    console.log('[captcha] bridge v2 started | rush=' + RUSH_CONFIG.enabled + ' | wi=' + getWindowIndex() + ' | target=10:' + String(RUSH_CONFIG.targetSec).padStart(2,'0') + '+' + (getWindowIndex() * RUSH_CONFIG.staggerMs / 1000) + 's');
+    console.log('[captcha] bridge v2 started | rush=' + RUSH_CFG.enabled + ' | wi=' + getWindowIndex() + ' | target=10:' + String(RUSH_CFG.targetSec).padStart(2,'0') + '+' + (getWindowIndex() * RUSH_CFG.staggerMs / 1000) + 's');
 })();
-
-
