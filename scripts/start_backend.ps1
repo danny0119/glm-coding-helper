@@ -40,12 +40,16 @@ function Test-BackendMainPython {
     $ErrFile = [System.IO.Path]::GetTempFileName()
     try {
         $Proc = Start-Process -FilePath $PythonPath `
-            -ArgumentList @("-c", "import ultralytics, PIL, cv2, numpy") `
+            -ArgumentList @("-c", "import ultralytics, paddleocr, paddlex, cv2, PIL, numpy") `
             -NoNewWindow `
             -Wait `
             -PassThru `
             -RedirectStandardOutput $OutFile `
             -RedirectStandardError $ErrFile
+        if ($Proc.ExitCode -ne 0) {
+            $errText = (Get-Content $ErrFile -ErrorAction SilentlyContinue | Out-String).Trim()
+            if ($errText) { Write-Host "[WARN] Import check failed: $errText" -ForegroundColor Yellow }
+        }
         return $Proc.ExitCode -eq 0
     } catch {
         return $false
@@ -70,7 +74,11 @@ if ((Test-BackendMainPython $env:CNCAPTCHA_CPU_OCR_PYTHON)) {
 } elseif ((Test-BackendMainPython $env:CNCAPTCHA_GPU_OCR_PYTHON)) {
     $MainPython = $env:CNCAPTCHA_GPU_OCR_PYTHON
 } else {
-    $MainPython = "python"
+    Write-Host "[FAIL] Backend environment is missing or broken." -ForegroundColor Red
+    Write-Host "       Required: ultralytics, paddleocr, paddlex, cv2, PIL (pillow), numpy" -ForegroundColor Red
+    Write-Host "       Run install-env.cmd or one-click-start.cmd to repair." -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
 }
 
 $argsList = @("scripts\tools\start_backend.py", "--mode", $Mode, "--port", "$Port")

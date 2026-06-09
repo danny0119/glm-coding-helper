@@ -75,6 +75,19 @@ if (-not $Ready) {
         $argsList += $arg
     }
     & powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\bootstrap_windows.ps1" @argsList
+
+    # 修复后重新验证
+    if ($Selected -eq "gpu") {
+        $Ready = Test-PythonImports $GpuPython $ImportCode
+    } else {
+        $Ready = Test-PythonImports $CpuPython $ImportCode
+    }
+    if (-not $Ready) {
+        Write-Host "[FAIL] Backend environment repair failed. Required deps still missing." -ForegroundColor Red
+        Write-Host "       Try running install-env.cmd manually." -ForegroundColor Red
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
 }
 
 # ── 检查 pipeline 后端依赖（非阻塞，仅提示）─────────────────
