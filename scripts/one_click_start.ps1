@@ -18,22 +18,11 @@ function Test-PythonImports {
         [string]$Code
     )
     if (-not $PythonPath -or -not (Test-Path $PythonPath)) { return $false }
-    $out = [System.IO.Path]::GetTempFileName()
-    $err = [System.IO.Path]::GetTempFileName()
     try {
-        $proc = Start-Process -FilePath $PythonPath `
-            -ArgumentList @("-c", $Code) `
-            -Wait `
-            -PassThru `
-            -NoNewWindow `
-            -RedirectStandardOutput $out `
-            -RedirectStandardError $err
-        return $proc.ExitCode -eq 0
+        $out = & $PythonPath -c $Code 2>&1
+        return $LASTEXITCODE -eq 0
     } catch {
         return $false
-    } finally {
-        Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $err -Force -ErrorAction SilentlyContinue
     }
 }
 
